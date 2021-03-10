@@ -98,7 +98,7 @@ namespace GoldDigger
 			{
 				if (paidLicense.Count >= 100 || this.coins.Count == 0)
 				{
-					await Task.Delay(50, token);
+					await Task.Yield();
 					continue;
 				}
 
@@ -145,7 +145,7 @@ namespace GoldDigger
 			{
 				if (this.freeLicense.Count >= 9)
 				{
-					await Task.Delay(50, token);
+					await Task.Yield();
 					continue;
 				}
 
@@ -208,7 +208,7 @@ namespace GoldDigger
 					if (this.paidLicense.TryDequeue(out license))
 						return (license, false);
 
-					await Task.Delay(10);
+					await Task.Yield();
 					if (waitCounter++ > 100)
 					{
 						longWaits++;
@@ -221,7 +221,7 @@ namespace GoldDigger
 			// only paid license will do the trick
 			while (!this.paidLicense.TryDequeue(out license))
 			{
-				await Task.Delay(10);
+				await Task.Yield();
 				if (waitCounter++ > 100)
 				{
 					longWaits++;
@@ -298,7 +298,7 @@ namespace GoldDigger
 				}
 				catch
 				{
-					await Task.Delay(10);
+					await Task.Yield();
 				}
 			}
 
@@ -319,10 +319,12 @@ namespace GoldDigger
 			tasks.Add(Digger(api));
 			tasks.Add(Digger(api));
 			tasks.Add(Seller(api));
+			tasks.Add(Seller(api));
+			tasks.Add(Seller(api));
 
 			while (DateTime.Now < end)
 			{
-				await Task.Delay(TimeSpan.FromSeconds(5));
+				await Task.Delay(TimeSpan.FromSeconds(10));
 				var stats = api.Stats.Snapshot();
 				var cb = this.currentBlock > this.initialBlocks.Count ? -1 : this.currentBlock;
 				var lic = this.licensePool.Snapshot();
@@ -342,7 +344,7 @@ namespace GoldDigger
 			{
 				if (!this.recoveredTreasures.TryDequeue(out var treasure))
 				{
-					await Task.Delay(100);
+					await Task.Yield();
 					continue;
 				}
 				
@@ -375,7 +377,14 @@ namespace GoldDigger
 			{
 				if (!this.treasuresToDig.TryDequeue(out var map))
 				{
-					await Task.Delay(100);
+					await Task.Yield();
+					continue;
+				}
+
+				if (this.recoveredTreasures.Count > 1000)
+				{
+					// hold on with digging, we have a long treasure exchange queue
+					await Task.Yield();
 					continue;
 				}
 
@@ -434,7 +443,7 @@ namespace GoldDigger
 				if (this.treasuresToDig.Count > 1000)
 				{
 					// hold on with exploration, we have a long treasure digging queue
-					await Task.Delay(50);
+					await Task.Yield();
 					continue;
 				}
 
@@ -456,7 +465,7 @@ namespace GoldDigger
 
 					if (block == null)
 					{
-						await Task.Delay(100);
+						await Task.Yield();
 						continue;
 					}
 				}
