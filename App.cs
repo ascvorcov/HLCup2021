@@ -120,14 +120,13 @@ namespace GoldDigger
 				{
 					var license = await this.api.IssueLicenseAsync(licenseCost, token);
 
-					Console.WriteLine($"Retrieved paid license for {cost} coins, allows {license.DigAllowed} digs.");
+					App.Log($"Retrieved paid license for {cost} coins, allows {license.DigAllowed} digs.");
 				}
-				catch (Exception ex)
+				catch
 				{
 					if (retryCount++ > 10)
 					{
-						longWaits++;
-						//Console.WriteLine("Something wrong with paid license: " + ex.Message);
+						//Log("Something wrong with paid license: " + ex.Message);
 						foreach (var coin in licenseCost)
 							this.coins.Add(coin); // add coins back
 
@@ -157,13 +156,12 @@ namespace GoldDigger
 					foreach (var lic in Enumerable.Repeat(license.Id, license.DigAllowed))
 						this.freeLicense.Enqueue(lic);
 				}
-				catch (Exception ex)
+				catch
 				{
 					getLicenseRetryCounter++;
 					if (getLicenseRetryCounter > 10)
 					{
-						longWaits++;
-						//Console.WriteLine("Something wrong, retry in free license:" + ex);
+						//Log("Something wrong, retry in free license:" + ex);
 						continue;
 					}
 					goto retry;
@@ -209,7 +207,8 @@ namespace GoldDigger
 					await Task.Delay(10);
 					if (waitCounter++ > 100)
 					{
-						Console.WriteLine("Waited more than 1 second for any license");
+						longWaits++;
+						//Log("Waited more than 1 second for any license");
 						waitCounter = 0;
 					}
 				}
@@ -221,7 +220,8 @@ namespace GoldDigger
 				await Task.Delay(10);
 				if (waitCounter++ > 100)
 				{
-					Console.WriteLine("Waited more than 1 second for any paid license");
+					longWaits++;
+					//Log("Waited more than 1 second for any paid license");
 					waitCounter = 0;
 				}
 			}
@@ -247,8 +247,15 @@ namespace GoldDigger
 
 		public static async Task Main()
 		{
-			Console.WriteLine($"{DateTime.Now}: Start");
+			Log("Start");
 			await new App().Run();
+		}
+
+		public static void Log(string message)
+		{
+			Console.Write(DateTime.Now);
+			Console.Write(": ");
+			Console.WriteLine(message);
 		}
 
 		private async Task Run()
@@ -291,7 +298,7 @@ namespace GoldDigger
 				}
 			}
 
-			Console.WriteLine($"{DateTime.Now}: Ready");
+			Log("Ready");
 
 			var tasks = new List<Task>();
 
@@ -316,8 +323,7 @@ namespace GoldDigger
 				var stats = api.Stats.Snapshot();
 				var cb = this.currentBlock > this.initialBlocks.Count ? -1 : this.currentBlock;
 				var lic = this.licensePool.Snapshot();
-				Console.WriteLine(
-					$"{DateTime.Now}: req={stats.RequestCount},fail={stats.FailureCount},ticks={stats.TimeSpent},pq={cb},sq={string.Join('/', secondaryExploreQueue.Select(q => q.Count))},dig={treasuresToDig.Count},tre={recoveredTreasures.Count},coin={this.coins.Count},lic={lic},yld={string.Join('/', levelYield)}");
+				Log($"req={stats.RequestCount},fail={stats.FailureCount},ticks={stats.TimeSpent},pq={cb},sq={string.Join('/', secondaryExploreQueue.Select(q => q.Count))},dig={treasuresToDig.Count},tre={recoveredTreasures.Count},coin={this.coins.Count},lic={lic},yld={string.Join('/', levelYield)}");
 			}
 
 			tasks.Clear();
@@ -346,7 +352,7 @@ namespace GoldDigger
 				}
 				catch
 				{
-					//Console.WriteLine(ex);
+					//Log(ex);
 					retryCounter++;
 					if (retryCounter > 10)
 					{
@@ -404,7 +410,7 @@ namespace GoldDigger
 					}
 					catch
 					{
-						//Console.WriteLine(ex);
+						//Log(ex);
 						digRetryCounter++;
 						if (digRetryCounter > 10)
 						{
@@ -416,7 +422,6 @@ namespace GoldDigger
 						goto retryDig;
 					}
 				}
-
 			}
 		}
 
