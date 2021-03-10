@@ -93,11 +93,10 @@ namespace GoldDigger
 
 		private async Task PollPaidLicense(CancellationToken token)
 		{
-			int experimental = 16;
-			// price list: 1 coin - 5 digs, 6 coins - 10 digs
+			// price list: 1 coin - 5 digs, 6 coins - 10 digs, 11 coins - 20-29 digs, 21 - 40-49
 			while (!token.IsCancellationRequested)
 			{
-				if (paidLicense.Count >= 20 || this.coins.Count == 0)
+				if (paidLicense.Count >= 100 || this.coins.Count == 0)
 				{
 					await Task.Delay(50, token);
 					continue;
@@ -105,10 +104,9 @@ namespace GoldDigger
 
 				var cost = this.coins.Count switch
 				{
-					<= 5 => 1,
-					<= 10 => 6,
-					<= 19 => 11,
-					> 30 => experimental++,
+					>= 10000 => 21,
+					>= 5000 => 11,
+					>= 1000 => 5,
 					_ => 1
 				};
 
@@ -120,7 +118,11 @@ namespace GoldDigger
 				{
 					var license = await this.api.IssueLicenseAsync(licenseCost, token);
 
-					App.Log($"Retrieved paid license for {cost} coins, allows {license.DigAllowed} digs.");
+					//App.Log($"Retrieved paid license for {cost} coins, allows {license.DigAllowed} digs.");
+					
+					foreach (var lic in Enumerable.Repeat(license.Id, license.DigAllowed))
+						this.paidLicense.Enqueue(lic);
+
 				}
 				catch
 				{
@@ -141,7 +143,7 @@ namespace GoldDigger
 		{
 			while (!token.IsCancellationRequested)
 			{
-				if (this.freeLicense.Count >= 15)
+				if (this.freeLicense.Count >= 9)
 				{
 					await Task.Delay(50, token);
 					continue;
@@ -152,6 +154,8 @@ namespace GoldDigger
 				try
 				{
 					var license = await this.api.IssueLicenseAsync(new int[0], token);
+
+					// App.Log($"Retrieved free license, allows {license.DigAllowed} digs.");
 
 					foreach (var lic in Enumerable.Repeat(license.Id, license.DigAllowed))
 						this.freeLicense.Enqueue(lic);
@@ -242,7 +246,7 @@ namespace GoldDigger
 		private readonly ConcurrentQueue<string> recoveredTreasures = new ConcurrentQueue<string>();
 		private readonly ConcurrentQueue<TreasureMap> treasuresToDig = new ConcurrentQueue<TreasureMap>();
 		private readonly ConcurrentQueue<BlockToExplore>[] secondaryExploreQueue = new ConcurrentQueue<BlockToExplore>[10];
-		private int[] levelYield = new int[0];
+		private int[] levelYield = new int[10];
 		private LicensePool licensePool;
 
 		public static async Task Main()
@@ -306,7 +310,6 @@ namespace GoldDigger
 			tasks.Add(Explorer(api, false));
 			tasks.Add(Explorer(api, false));
 			tasks.Add(Explorer(api, false));
-			tasks.Add(Explorer(api, false));
 			tasks.Add(Digger(api, true));
 			tasks.Add(Digger(api, true));
 			tasks.Add(Digger(api));
@@ -319,7 +322,7 @@ namespace GoldDigger
 
 			while (DateTime.Now < end)
 			{
-				await Task.Delay(TimeSpan.FromSeconds(10));
+				await Task.Delay(TimeSpan.FromSeconds(5));
 				var stats = api.Stats.Snapshot();
 				var cb = this.currentBlock > this.initialBlocks.Count ? -1 : this.currentBlock;
 				var lic = this.licensePool.Snapshot();
@@ -343,12 +346,13 @@ namespace GoldDigger
 					continue;
 				}
 				
-				int[] exchangedCoins;
 				int retryCounter = 0;
 				retry:
 				try
 				{
-					exchangedCoins = (await api.CashAsync(treasure)).ToArray();
+					var exchangedCoins = await api.CashAsync(treasure);
+					foreach (var coin in exchangedCoins)
+						this.coins.Add(coin);
 				}
 				catch
 				{
@@ -362,8 +366,6 @@ namespace GoldDigger
 					goto retry;
 				}
 
-				foreach (var coin in exchangedCoins)
-					this.coins.Add(coin);
 			}
 		}
 
@@ -377,7 +379,7 @@ namespace GoldDigger
 					continue;
 				}
 
-				while (map.Amount > 0 && map.Depth <= 10)
+				while (map.Amount > 0 && map.Depth <= 6)
 				{
 					if (map.Depth > 3 && (shallowDigger || this.coins.Count == 0))
 					{
@@ -395,7 +397,7 @@ namespace GoldDigger
 						var dig = new Dig {Depth = map.Depth, LicenseID = license, PosX = map.X, PosY = map.Y};
 						var treasures = await api.DigAsync(dig, cts.Token);
 
-						this.levelYield[map.Depth] += treasures.Count;
+						this.levelYield[map.Depth-1] += treasures.Count;
 
 						map.Depth++;
 						map.Amount -= treasures.Count;
@@ -429,6 +431,13 @@ namespace GoldDigger
 		{
 			while (!this.ctsAppStop.IsCancellationRequested)
 			{
+				if (this.treasuresToDig.Count > 1000)
+				{
+					// hold on with exploration, we have a long treasure digging queue
+					await Task.Delay(50);
+					continue;
+				}
+
 				BlockToExplore block = null;
 				if (preferPrimaryQueue)
 				{
