@@ -1,61 +1,26 @@
+using System.Threading;
+
 namespace GoldDigger
 {
-	using System.Diagnostics;
-
 	public class Stats
 	{
-		public int RequestCount;
-		public int FailureCount;
-		public long TimeSpent;
+		private long _data;
 
-		public Tracker Begin()
+		public (int requestsTotal, int failures) Snapshot()
 		{
-			return new Tracker(this);
+			var data = Interlocked.Read(ref _data);
+
+			return ((int) (data & 0xFFFFFFFF), (int) (data >> 32));
 		}
 
-		public Stats Snapshot()
+		public void Success()
 		{
-			lock (this)
-			{
-				var ret = new Stats
-					{RequestCount = this.RequestCount, FailureCount = this.FailureCount, TimeSpent = this.TimeSpent};
-				this.RequestCount = 0;
-				this.FailureCount = 0;
-				this.TimeSpent = 0;
-				return ret;
-			}
+			Interlocked.Add(ref _data, 1);
 		}
 
-		public class Tracker
+		public void Fail()
 		{
-			private readonly Stats parent;
-			public readonly Stopwatch sw = Stopwatch.StartNew();
-
-			public Tracker(Stats parent)
-			{
-				this.parent = parent;
-			}
-
-			public void Success()
-			{
-				var elapsed = sw.ElapsedTicks;
-				lock (this.parent)
-				{
-					this.parent.RequestCount++;
-					this.parent.TimeSpent += elapsed;
-				}
-			}
-
-			public void Fail()
-			{
-				var elapsed = sw.ElapsedTicks;
-				lock (this.parent)
-				{
-					this.parent.RequestCount++;
-					this.parent.FailureCount++;
-					this.parent.TimeSpent += elapsed;
-				}
-			}
+			Interlocked.Add(ref _data, 0x0000000100000001);
 		}
 	}
 }

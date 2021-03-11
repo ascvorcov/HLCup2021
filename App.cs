@@ -12,9 +12,9 @@ namespace GoldDigger
 	{
 		public BlockToExplore(int x, int y, int size)
 		{
-			this.X = x;
-			this.Y = y;
-			this.Size = size;
+			X = x;
+			Y = y;
+			Size = size;
 		}
 
 		public int X { get; }
@@ -45,145 +45,174 @@ namespace GoldDigger
 	{
 		public TreasureMap(int x, int y, int amount)
 		{
-			this.X = x;
-			this.Y = y;
-			this.Amount = amount;
-			this.Depth = 1;
+			X = x;
+			Y = y;
+			Amount = amount;
+			Depth = 1;
 		}
 
 		public int X { get; }
 		public int Y { get; }
 		public int Depth { get; set; }
 		public int Amount { get; set; }
+	}
 
+	public class TreasureChest
+	{
+		public string Id;
+		public int FromLevel;
 	}
 
 	public class LicensePool
 	{
-		private readonly ConcurrentBag<int> coins;
+		private readonly ConcurrentBag<int> _coins;
 
-		private readonly Api api;
+		private readonly Api _api;
 
-		private readonly ConcurrentQueue<int> freeLicense = new ConcurrentQueue<int>();
+		private readonly ConcurrentQueue<int> _freeLicense = new ConcurrentQueue<int>();
 
-		private readonly ConcurrentQueue<int> paidLicense = new ConcurrentQueue<int>();
+		private readonly ConcurrentQueue<int> _paidLicense = new ConcurrentQueue<int>();
 
-		private readonly Task freeLicensePoll;
+		private readonly Task _freeLicensePoll;
 		
-		private readonly Task paidLicensePoll;
+		private readonly Task _paidLicensePoll;
 
-		private int longWaits = 0;
+		private int _longWaits;
+		private int _spentOnLicense;
 
 		public LicensePool(Api api, ConcurrentBag<int> coins, CancellationToken token)
 		{
-			this.api = api;
-			this.coins = coins;
-			this.freeLicensePoll = PollFreeLicense(token);
-			this.paidLicensePoll = PollPaidLicense(token);
+			_api = api;
+			_coins = coins;
+			_freeLicensePoll = PollFreeLicense(token);
+			_paidLicensePoll = PollPaidLicense(token);
 		}
 
 		private IEnumerable<int> TakeCoins(int count)
 		{
 			while (count-- > 0)
 			{
-				if (this.coins.TryTake(out var coin))
+				if (_coins.TryTake(out var coin))
 					yield return coin;
 			}
 		}
 
 		private async Task PollPaidLicense(CancellationToken token)
 		{
-			// price list: 1 coin - 5 digs, 6 coins - 10 digs, 11 coins - 20-29 digs, 21 - 40-49
-			while (!token.IsCancellationRequested)
+			try
 			{
-				if (paidLicense.Count >= 100 || this.coins.Count == 0)
+				// price list: 1 coin - 5 digs, 6 coins - 10 digs, 11 coins - 20-29 digs, 21 - 40-49
+				while (!token.IsCancellationRequested)
 				{
-					await Task.Yield();
-					continue;
-				}
-
-				var cost = this.coins.Count switch
-				{
-					>= 10000 => 21,
-					>= 5000 => 11,
-					>= 1000 => 5,
-					_ => 1
-				};
-
-				var licenseCost = TakeCoins(cost).ToArray();
-
-				int retryCount = 0;
-				retry:
-				try
-				{
-					var license = await this.api.IssueLicenseAsync(licenseCost, token);
-
-					//App.Log($"Retrieved paid license for {cost} coins, allows {license.DigAllowed} digs.");
-					
-					foreach (var lic in Enumerable.Repeat(license.Id, license.DigAllowed))
-						this.paidLicense.Enqueue(lic);
-
-				}
-				catch
-				{
-					if (retryCount++ > 10)
+					if (_paidLicense.Count >= 100 || _coins.Count == 0)
 					{
-						//Log("Something wrong with paid license: " + ex.Message);
-						foreach (var coin in licenseCost)
-							this.coins.Add(coin); // add coins back
-
+						await Task.Delay(10);
 						continue;
 					}
-					goto retry;
+
+					var cost = _coins.Count switch
+					{
+						>= 10000 => 21,
+						>= 5000 => 11,
+						>= 1000 => 5,
+						_ => 1
+					};
+
+					var licenseCost = TakeCoins(cost).ToArray();
+
+					int retryCount = 0;
+					while (true)
+					{
+						var license = await _api.IssueLicenseAsync(licenseCost, token);
+						if (license != null)
+						{
+							if (license.digAllowed < 0) // no more license allowed error
+							{
+								foreach (var coin in licenseCost)
+									_coins.Add(coin); // add coins back
+								await Task.Delay(10);
+								break;
+							}
+
+							Interlocked.Add(ref _spentOnLicense,  licenseCost.Length);
+							foreach (var lic in Enumerable.Repeat(license.id, license.digAllowed))
+								_paidLicense.Enqueue(lic);
+							break;
+						}
+
+						if (retryCount++ > 10)
+						{
+							//Log("Something wrong with paid license: " + ex.Message);
+							foreach (var coin in licenseCost)
+								_coins.Add(coin); // add coins back
+							break;
+						}
+					}
 				}
 			}
+			catch (Exception ex)
+			{
+				Console.WriteLine("poll paid license error:" + ex);
+			}
+
+			Console.WriteLine("paid license poll completed");
 		}
 
 		private async Task PollFreeLicense(CancellationToken token)
 		{
-			while (!token.IsCancellationRequested)
+			try
 			{
-				if (this.freeLicense.Count >= 9)
+				while (!token.IsCancellationRequested)
 				{
-					await Task.Yield();
-					continue;
-				}
-
-				int getLicenseRetryCounter = 0;
-				retry:
-				try
-				{
-					var license = await this.api.IssueLicenseAsync(new int[0], token);
-
-					// App.Log($"Retrieved free license, allows {license.DigAllowed} digs.");
-
-					foreach (var lic in Enumerable.Repeat(license.Id, license.DigAllowed))
-						this.freeLicense.Enqueue(lic);
-				}
-				catch
-				{
-					getLicenseRetryCounter++;
-					if (getLicenseRetryCounter > 10)
+					if (_freeLicense.Count >= 9)
 					{
-						//Log("Something wrong, retry in free license:" + ex);
+						await Task.Delay(10);
 						continue;
 					}
-					goto retry;
+
+					int getLicenseRetryCounter = 0;
+					while (true)
+					{
+						var license = await _api.IssueLicenseAsync(new int[0], token);
+
+						// App.Log($"Retrieved free license, allows {license.DigAllowed} digs.");
+						if (license != null)
+						{
+							if (license.digAllowed < 0) // no more license allowed error
+							{
+								await Task.Delay(10);
+								break;
+							}
+
+							foreach (var lic in Enumerable.Repeat(license.id, license.digAllowed))
+								_freeLicense.Enqueue(lic);
+							break;
+						}
+
+						if (getLicenseRetryCounter++ > 10)
+							break;
+					}
 				}
 			}
+			catch (Exception ex)
+			{
+				Console.WriteLine("poll free license error:" + ex);
+			}
+
+			Console.WriteLine("free license poll completed");
 		}
 
-		public (int free, int paid, int waits) Snapshot()
+		public (int free, int paid, int waits, int spent) Snapshot()
 		{
-			return (this.freeLicense.Count, this.paidLicense.Count, this.longWaits);
+			return (_freeLicense.Count, _paidLicense.Count, _longWaits, _spentOnLicense);
 		}
 
 		public void ReturnLicense(int license, bool free)
 		{
 			if (free)
-				this.freeLicense.Enqueue(license);
+				_freeLicense.Enqueue(license);
 			else
-				this.paidLicense.Enqueue(license);
+				_paidLicense.Enqueue(license);
 		}
 
 		public async Task<(int license, bool free)> GetLicense(int depth)
@@ -196,22 +225,22 @@ namespace GoldDigger
 				// but it is also ok to use paid license
 				while (true)
 				{
-					if (this.coins.Count > 1000)
+					if (_coins.Count > 1000)
 					{
 						// prefer paid license if we're good
-						if (this.paidLicense.TryDequeue(out license))
+						if (_paidLicense.TryDequeue(out license))
 							return (license, false);
 					}
 
-					if (this.freeLicense.TryDequeue(out license))
+					if (_freeLicense.TryDequeue(out license))
 						return (license, true);
-					if (this.paidLicense.TryDequeue(out license))
+					if (_paidLicense.TryDequeue(out license))
 						return (license, false);
 
-					await Task.Yield();
+					await Task.Delay(10);
 					if (waitCounter++ > 100)
 					{
-						longWaits++;
+						Interlocked.Increment(ref _longWaits);
 						//Log("Waited more than 1 second for any license");
 						waitCounter = 0;
 					}
@@ -219,12 +248,12 @@ namespace GoldDigger
 			}
 
 			// only paid license will do the trick
-			while (!this.paidLicense.TryDequeue(out license))
+			while (!_paidLicense.TryDequeue(out license))
 			{
-				await Task.Yield();
+				await Task.Delay(10);
 				if (waitCounter++ > 100)
 				{
-					longWaits++;
+					Interlocked.Increment(ref _longWaits);
 					//Log("Waited more than 1 second for any paid license");
 					waitCounter = 0;
 				}
@@ -237,17 +266,17 @@ namespace GoldDigger
 
 	public class App
 	{
-		private readonly CancellationTokenSource ctsAppStop = new CancellationTokenSource();
+		private readonly CancellationTokenSource _ctsAppStop = new CancellationTokenSource();
 
-		private readonly ConcurrentBag<int> coins = new ConcurrentBag<int>();
-		private readonly List<BlockToExplore> initialBlocks = new List<BlockToExplore>();
-		private volatile int currentBlock;
+		private readonly ConcurrentBag<int> _coins = new ConcurrentBag<int>();
+		private readonly List<BlockToExplore> _initialBlocks = new List<BlockToExplore>();
+		private volatile int _currentBlock;
 
-		private readonly ConcurrentQueue<string> recoveredTreasures = new ConcurrentQueue<string>();
-		private readonly ConcurrentQueue<TreasureMap> treasuresToDig = new ConcurrentQueue<TreasureMap>();
-		private readonly ConcurrentQueue<BlockToExplore>[] secondaryExploreQueue = new ConcurrentQueue<BlockToExplore>[10];
-		private int[] levelYield = new int[10];
-		private LicensePool licensePool;
+		private readonly ConcurrentQueue<TreasureChest> _recoveredTreasures = new ConcurrentQueue<TreasureChest>();
+		private readonly ConcurrentQueue<TreasureMap> _treasuresToDig = new ConcurrentQueue<TreasureMap>();
+		private readonly ConcurrentQueue<BlockToExplore>[] _secondaryExploreQueue = new ConcurrentQueue<BlockToExplore>[10];
+		private readonly int[] _levelYield = new int[10];
+		private LicensePool _licensePool;
 
 		public static async Task Main()
 		{
@@ -264,43 +293,36 @@ namespace GoldDigger
 
 		private async Task Run()
 		{
-			var end = DateTime.Now.AddMinutes(10);
+			var end = DateTime.Now.AddMinutes(11);
 
-			await Task.Yield();
-			var address = Environment.GetEnvironmentVariable("ADDRESS") ?? "localhost";
-			var uri = new UriBuilder("http", address, 8000).Uri;
+			await Task.Delay(10);
+			var address = Environment.GetEnvironmentVariable("ADDRESS");
+			var uri = new UriBuilder("http", address ?? "localhost", address == null ? 5000 : 8000).Uri;
 			var api = new Api(uri.ToString(), new HttpClient());
 
-			this.licensePool = new LicensePool(api, this.coins, this.ctsAppStop.Token);
 			// break down into exploration blocks
 			const int blockSize = 14;
 			for (int x = 0; x < 3500; x+= blockSize)
 			{
 				for (int y = 0; y < 3500; y+= blockSize)
 				{
-					this.initialBlocks.Add(new BlockToExplore(x,y, blockSize));
+					_initialBlocks.Add(new BlockToExplore(x,y, blockSize));
 				}
 			}
 
 			foreach (var i in Enumerable.Range(0, 10))
 			{
-				this.secondaryExploreQueue[i] = new ConcurrentQueue<BlockToExplore>();
+				_secondaryExploreQueue[i] = new ConcurrentQueue<BlockToExplore>();
 			}
 
-			Shuffle(this.initialBlocks);
+			Shuffle(_initialBlocks);
 
-			while (true)
+			while (!await api.HealthCheckAsync(_ctsAppStop.Token))
 			{
-				try
-				{
-					await api.HealthCheckAsync();
-					break;
-				}
-				catch
-				{
-					await Task.Yield();
-				}
+				await Task.Delay(10);
 			}
+
+			_licensePool = new LicensePool(api, _coins, _ctsAppStop.Token);
 
 			Log("Ready");
 
@@ -325,190 +347,211 @@ namespace GoldDigger
 			while (DateTime.Now < end)
 			{
 				await Task.Delay(TimeSpan.FromSeconds(10));
-				var stats = api.Stats.Snapshot();
-				var cb = this.currentBlock > this.initialBlocks.Count ? -1 : this.currentBlock;
-				var lic = this.licensePool.Snapshot();
-				Log($"req={stats.RequestCount},fail={stats.FailureCount},ticks={stats.TimeSpent},pq={cb},sq={string.Join('/', secondaryExploreQueue.Select(q => q.Count))},dig={treasuresToDig.Count},tre={recoveredTreasures.Count},coin={this.coins.Count},lic={lic},yld={string.Join('/', levelYield)}");
+				var lic = api.Stats[0].Snapshot();
+				var exp = api.Stats[1].Snapshot();
+				var dig = api.Stats[2].Snapshot();
+				var cas = api.Stats[3].Snapshot();
+				var licPool = _licensePool.Snapshot();
+				
+				var cb = _currentBlock > _initialBlocks.Count ? -1 : _currentBlock;
+				Log($"lic={lic},exp={exp},dig={dig},cas={cas},pq={cb},sq={string.Join('/', _secondaryExploreQueue.Select(q => q.Count))},maps={_treasuresToDig.Count},tre={_recoveredTreasures.Count},coin={_coins.Count},yld={string.Join('/', _levelYield)},lic_pool={licPool}");
 			}
 
 			tasks.Clear();
-			this.ctsAppStop.Cancel();
+			_ctsAppStop.Cancel();
 			await Task.Delay(10);
 
-			this.ctsAppStop.Dispose();
+			_ctsAppStop.Dispose();
 		}
 
 		public async Task Seller(Api api)
 		{
-			while (!this.ctsAppStop.IsCancellationRequested)
+			try
 			{
-				if (!this.recoveredTreasures.TryDequeue(out var treasure))
+				while (!_ctsAppStop.IsCancellationRequested)
 				{
-					await Task.Yield();
-					continue;
-				}
-				
-				int retryCounter = 0;
-				retry:
-				try
-				{
-					var exchangedCoins = await api.CashAsync(treasure);
-					foreach (var coin in exchangedCoins)
-						this.coins.Add(coin);
-				}
-				catch
-				{
-					//Log(ex);
-					retryCounter++;
-					if (retryCounter > 10)
+					if (!_recoveredTreasures.TryDequeue(out var chest))
 					{
-						this.recoveredTreasures.Enqueue(treasure); // give up
+						await Task.Delay(10);
 						continue;
 					}
-					goto retry;
-				}
 
+					int retry = 0;
+					while (true)
+					{
+						var exchangedCoins = await api.CashAsync(chest.Id, _ctsAppStop.Token);
+						if (exchangedCoins != null)
+						{
+							// level yield in coins
+							_levelYield[chest.FromLevel - 1] += exchangedCoins.Length;
+							foreach (var coin in exchangedCoins)
+								_coins.Add(coin);
+							break;
+						}
+
+						if (++retry > 10)
+						{
+							_recoveredTreasures.Enqueue(chest); // give up
+							break;
+						}
+					}
+				}
 			}
+			catch (Exception ex)
+			{
+				Console.WriteLine("seller error:" + ex);
+			}
+
+			Console.WriteLine("seller completed");
 		}
 
 		public async Task Digger(Api api, bool shallowDigger = false)
 		{
-			while (!this.ctsAppStop.IsCancellationRequested)
+			try
 			{
-				if (!this.treasuresToDig.TryDequeue(out var map))
+				while (!_ctsAppStop.IsCancellationRequested)
 				{
-					await Task.Yield();
-					continue;
-				}
-
-				if (this.recoveredTreasures.Count > 1000)
-				{
-					// hold on with digging, we have a long treasure exchange queue
-					await Task.Yield();
-					continue;
-				}
-
-				while (map.Amount > 0 && map.Depth <= 6)
-				{
-					if (map.Depth > 3 && (shallowDigger || this.coins.Count == 0))
+					if (!_treasuresToDig.TryDequeue(out var map))
 					{
-						this.treasuresToDig.Enqueue(map);
-						break; // give up on this treasure
+						await Task.Delay(10);
+						continue;
 					}
 
-					var (license, free) = await this.licensePool.GetLicense(map.Depth);
-					
-					int digRetryCounter = 0;
-					retryDig:
-					try
+					if (_recoveredTreasures.Count > 1000)
 					{
-						using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-						var dig = new Dig {Depth = map.Depth, LicenseID = license, PosX = map.X, PosY = map.Y};
-						var treasures = await api.DigAsync(dig, cts.Token);
-
-						this.levelYield[map.Depth-1] += treasures.Count;
-
-						map.Depth++;
-						map.Amount -= treasures.Count;
-
-						foreach (var tr in treasures)
-							this.recoveredTreasures.Enqueue(tr);
-
+						// hold on with digging, we have a long treasure exchange queue
+						await Task.Delay(10);
+						continue;
 					}
-					catch (OperationCanceledException)
+
+					while (map.Amount > 0 && map.Depth <= 6)
 					{
-						goto retryDig;
-					}
-					catch
-					{
-						//Log(ex);
-						digRetryCounter++;
-						if (digRetryCounter > 10)
+						if (map.Depth > 3 && (shallowDigger || _coins.Count == 0))
 						{
-							this.licensePool.ReturnLicense(license, free);
-							this.treasuresToDig.Enqueue(map);
+							_treasuresToDig.Enqueue(map);
 							break; // give up on this treasure
 						}
 
-						goto retryDig;
+						var (license, free) = await _licensePool.GetLicense(map.Depth);
+
+						int digRetryCounter = 0;
+						while (true)
+						{
+							var dig = new Dig {depth = map.Depth, licenseID = license, posX = map.X, posY = map.Y};
+							var treasures = await api.DigAsync(dig, _ctsAppStop.Token);
+
+							if (treasures != null)
+							{
+								if (treasures.Length > 1)
+									Log($"Dug out {treasures.Length} treasures from level {map.Depth}");
+								foreach (var tr in treasures)
+									_recoveredTreasures.Enqueue(new TreasureChest {Id = tr, FromLevel = map.Depth});
+
+								map.Depth++;
+								map.Amount -= treasures.Length;
+								break;
+							}
+
+							if (digRetryCounter++ > 10)
+							{
+								_licensePool.ReturnLicense(license, free);
+								_treasuresToDig.Enqueue(map);
+								break; // give up on this treasure
+							}
+						}
 					}
 				}
 			}
+			catch (Exception ex)
+			{
+				Console.WriteLine("digger error:" + ex);
+			}
+
+			Console.WriteLine("digger completed");
 		}
 
 		public async Task Explorer(Api api, bool preferPrimaryQueue)
 		{
-			while (!this.ctsAppStop.IsCancellationRequested)
+			try
 			{
-				if (this.treasuresToDig.Count > 1000)
+				while (!_ctsAppStop.IsCancellationRequested)
 				{
-					// hold on with exploration, we have a long treasure digging queue
-					await Task.Yield();
-					continue;
-				}
-
-				BlockToExplore block = null;
-				if (preferPrimaryQueue)
-				{
-					var curBlockIdx = Interlocked.Increment(ref this.currentBlock);
-					if (curBlockIdx < this.initialBlocks.Count)
-						block = this.initialBlocks[curBlockIdx];
-				}
-
-				if (block == null)
-				{
-					foreach (var q in this.secondaryExploreQueue)
+					if (_treasuresToDig.Count > 1000)
 					{
-						if (q.TryDequeue(out block))
-							break;
+						// hold on with exploration, we have a long treasure digging queue
+						await Task.Delay(10);
+						continue;
+					}
+
+					BlockToExplore block = null;
+					if (preferPrimaryQueue)
+					{
+						var curBlockIdx = Interlocked.Increment(ref _currentBlock);
+						if (curBlockIdx < _initialBlocks.Count)
+							block = _initialBlocks[curBlockIdx];
 					}
 
 					if (block == null)
 					{
-						await Task.Yield();
-						continue;
-					}
-				}
-
-				int retryCount = 0;
-				retry:
-				try
-				{
-					using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-					var exploreResult = await api.ExploreAreaAsync(new Area { PosX = block.X, PosY = block.Y, SizeX = block.Size, SizeY = block.Size }, cts.Token);
-					if (exploreResult.Amount > 0)
-					{
-						if (block.Size == 1)
-							this.treasuresToDig.Enqueue(new TreasureMap(block.X, block.Y, exploreResult.Amount));
-						else if (block.Size == 14)
+						foreach (var q in _secondaryExploreQueue)
 						{
-							if (exploreResult.Amount > 20) exploreResult.Amount = 20;
-							var priority = 10 - exploreResult.Amount / 2;
+							if (q.TryDequeue(out block))
+								break;
+						}
 
+						if (block == null)
+						{
+							await Task.Delay(10);
+							continue;
+						}
+					}
+
+					int retryCount = 0;
+					while (true)
+					{
+						var exploreResult = await api.ExploreAreaAsync(
+							new Area {posX = block.X, posY = block.Y, sizeX = block.Size, sizeY = block.Size},
+							_ctsAppStop.Token);
+						if (exploreResult != null)
+						{
+							if (exploreResult.amount == 0)
+								break;
+
+							if (block.Size == 1)
+								_treasuresToDig.Enqueue(new TreasureMap(block.X, block.Y, exploreResult.amount));
+							else if (block.Size == 14)
+							{
+								if (exploreResult.amount > 18) exploreResult.amount = 18;
+								var priority = 9 - exploreResult.amount / 2;
+
+								foreach (var smallerBlock in block.Break())
+									_secondaryExploreQueue[priority].Enqueue(smallerBlock);
+							}
+							else if (block.Size == 2)
+							{
+								var priority = exploreResult.amount > 2 ? 0 : 1;
+								foreach (var smallestBlock in block.Break())
+									_secondaryExploreQueue[priority].Enqueue(smallestBlock);
+							}
+
+							break;
+						}
+
+						if (retryCount++ > 10)
+						{
 							foreach (var smallerBlock in block.Break())
-								this.secondaryExploreQueue[priority].Enqueue(smallerBlock);
-						}
-						else if (block.Size == 2)
-						{
-							var priority = exploreResult.Amount > 2 ? 0 : 1;
-							foreach (var smallestBlock in block.Break())
-								this.secondaryExploreQueue[priority].Enqueue(smallestBlock);
+								_secondaryExploreQueue[5].Enqueue(smallerBlock);
+							break; // give up block
 						}
 					}
-				}
-				catch
-				{
-					if (retryCount++ > 10)
-					{
-						foreach (var smallerBlock in block.Break())
-							this.secondaryExploreQueue[5].Enqueue(smallerBlock);
-
-						continue; // give up block
-					}
-
-					goto retry;
 				}
 			}
+			catch (Exception ex)
+			{
+				Console.WriteLine("explorer error:" + ex);
+			}
+
+			Console.WriteLine("explorer completed");
 		}
 
 		public static void Shuffle<T>(IList<T> list)
