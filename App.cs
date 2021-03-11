@@ -152,10 +152,10 @@ namespace GoldDigger
 			}
 			catch (Exception ex)
 			{
-				Console.WriteLine("poll paid license error:" + ex);
+				App.Log("poll paid license error:" + ex.Message);
 			}
 
-			Console.WriteLine("paid license poll completed");
+			App.Log("paid license poll completed");
 		}
 
 		private async Task PollFreeLicense(CancellationToken token)
@@ -196,10 +196,10 @@ namespace GoldDigger
 			}
 			catch (Exception ex)
 			{
-				Console.WriteLine("poll free license error:" + ex);
+				App.Log("poll free license error:" + ex.Message);
 			}
 
-			Console.WriteLine("free license poll completed");
+			App.Log("free license poll completed");
 		}
 
 		public (int free, int paid, int waits, int spent) Snapshot()
@@ -399,10 +399,10 @@ namespace GoldDigger
 			}
 			catch (Exception ex)
 			{
-				Console.WriteLine("seller error:" + ex);
+				Log("seller error:" + ex.Message);
 			}
 
-			Console.WriteLine("seller completed");
+			Log("seller completed");
 		}
 
 		public async Task Digger(Api api, bool shallowDigger = false)
@@ -464,10 +464,10 @@ namespace GoldDigger
 			}
 			catch (Exception ex)
 			{
-				Console.WriteLine("digger error:" + ex);
+				Log("digger error:" + ex.Message);
 			}
 
-			Console.WriteLine("digger completed");
+			Log("digger completed");
 		}
 
 		public async Task Explorer(Api api, bool preferPrimaryQueue)
@@ -548,10 +548,10 @@ namespace GoldDigger
 			}
 			catch (Exception ex)
 			{
-				Console.WriteLine("explorer error:" + ex);
+				Log("explorer error:" + ex.Message);
 			}
 
-			Console.WriteLine("explorer completed");
+			Log("explorer completed");
 		}
 
 		public static void Shuffle<T>(IList<T> list)

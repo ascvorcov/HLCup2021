@@ -88,7 +88,7 @@ namespace GoldDigger
 
             if (response.StatusCode == HttpStatusCode.UnprocessableEntity)
             {
-                Console.WriteLine("Error:" + await response.Content.ReadAsStringAsync(token));
+                App.Log("Error:" + await response.Content.ReadAsStringAsync(token));
             }
 
             Stats[stats].Fail();
