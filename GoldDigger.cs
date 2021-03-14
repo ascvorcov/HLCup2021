@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -9,8 +10,6 @@ namespace GoldDigger
 {
     public class Api 
     {
-        public readonly Stats[] Stats = { new Stats(), new Stats(), new Stats(), new Stats() };
-
         private readonly HttpClient _httpClient;
 
         private readonly Uri _healthCheck;
@@ -22,6 +21,8 @@ namespace GoldDigger
         private readonly MediaTypeHeaderValue _contentType = new MediaTypeHeaderValue("application/json");
         private readonly MediaTypeWithQualityHeaderValue _header = new MediaTypeWithQualityHeaderValue("application/json");
         private readonly License noMoreLicenseError = new License {digAllowed = -1};
+
+        private volatile Stats[] _stats = { new Stats(), new Stats(), new Stats(), new Stats() };
 
         public Api(string baseUrl, HttpClient httpClient)
         {
@@ -44,12 +45,12 @@ namespace GoldDigger
         /// <param name="cancellationToken">A cancellation token that can be used by other objects or threads to receive notice of cancellation.</param>
         /// <param name="money">Amount of money to spend for a license. Empty array for get free license. Maximum 10 active licenses</param>
         /// <returns>Issued license.</returns>
-        public Task<License> IssueLicenseAsync(int[] money, CancellationToken cancellationToken) => PostAsync<int[], License>(0, _licenses, money, noMoreLicenseError, cancellationToken);
+        public Task<License> IssueLicenseAsync(int[] money, CancellationToken cancellationToken) => PostAsync(0, _licenses, money, noMoreLicenseError, cancellationToken);
 
         /// <param name="cancellationToken">A cancellation token that can be used by other objects or threads to receive notice of cancellation.</param>
         /// <param name="area">Area to be explored.</param>
         /// <returns>Report about found treasures.</returns>
-        public Task<Report> ExploreAreaAsync(Area area, CancellationToken cancellationToken) => PostAsync<Area, Report>(1, _explore, area, null, cancellationToken);
+        public Task<Report> ExploreAreaAsync(Area area, CancellationToken cancellationToken) => PostAsync(1, _explore, area, (Report)null, cancellationToken);
 
         /// <param name="cancellationToken">A cancellation token that can be used by other objects or threads to receive notice of cancellation.</param>
         /// <param name="dig">License, place and depth to dig.</param>
@@ -59,26 +60,30 @@ namespace GoldDigger
         /// <param name="cancellationToken">A cancellation token that can be used by other objects or threads to receive notice of cancellation.</param>
         /// <param name="treasure">Treasure for exchange.</param>
         /// <returns>Payment for treasure.</returns>
-        public Task<int[]> CashAsync(string treasure, CancellationToken cancellationToken) => PostAsync<string, int[]>(3, _cash, treasure, null, cancellationToken);
+        public Task<int[]> CashAsync(string treasure, CancellationToken cancellationToken) => PostAsync(3, _cash, treasure, (int[])null, cancellationToken);
 
+        public Stats[] Snapshot()
+        {
+            var stats = new[] { new Stats(), new Stats(), new Stats(), new Stats() };
+            return Interlocked.Exchange(ref _stats, stats);
+        }
         private async Task<TOut> PostAsync<TIn, TOut>(int stats, Uri target, TIn obj, TOut custom, CancellationToken token)
         {
             using var message = new HttpRequestMessage(HttpMethod.Post, target);
 
-            //var content = new StringContent(Newtonsoft.Json.JsonConvert.SerializeObject(obj));
             var content = new ByteArrayContent(Utf8Json.JsonSerializer.Serialize(obj));
 
             content.Headers.ContentType = _contentType;
             message.Content = content;
             message.Headers.Accept.Add(_header);
 
+            var w = Stopwatch.StartNew();
             using var response =
                 await _httpClient.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, token);
             if (response.IsSuccessStatusCode)
             {
-                Stats[stats].Success();
+                _stats[stats].Success(w.ElapsedTicks);
                 return Utf8Json.JsonSerializer.Deserialize<TOut>(await response.Content.ReadAsStreamAsync(token));
-                //return Newtonsoft.Json.JsonConvert.DeserializeObject<TOut>(await response.Content.ReadAsStringAsync(token));
             }
 
             if (response.StatusCode == HttpStatusCode.NotFound || response.StatusCode == HttpStatusCode.Conflict)
@@ -86,12 +91,12 @@ namespace GoldDigger
                 return custom;
             }
 
+            _stats[stats].Fail(w.ElapsedTicks);
             if (response.StatusCode == HttpStatusCode.UnprocessableEntity)
             {
                 App.Log("Error:" + await response.Content.ReadAsStringAsync(token));
             }
 
-            Stats[stats].Fail();
             return default;
         }
     }

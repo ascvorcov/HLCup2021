@@ -10,34 +10,46 @@ namespace GoldDigger
 {
 	public class BlockToExplore
 	{
-		public BlockToExplore(int x, int y, int size)
+		private volatile int _amount;
+		public BlockToExplore(int x, int y, int size, BlockToExplore parent = null)
 		{
 			X = x;
 			Y = y;
 			Size = size;
+			Parent = parent;
 		}
 
 		public int X { get; }
 		public int Y { get; }
 		public int Size { get; }
+		public BlockToExplore Parent { get; }
+
+		public void UpdateAmount(int amount)
+		{
+			_amount = amount;
+			if (Parent != null)
+				Interlocked.Add(ref Parent._amount, -amount);
+		}
+
+		public bool WorthExploring()
+		{
+			if (Parent == null) return true;
+			var a = Parent._amount;
+			if (a <= 0) return false;
+
+			if (Size == 8 && a == 1) return false;
+
+			return true;
+		}
 
 		public IEnumerable<BlockToExplore> Break()
 		{
-			// can be 14x14, 2x2, 1x1
-			if (Size == 14)
-			{
-				for (int dx = 0; dx < 14; dx+=2)
-					for (int dy = 0; dy < 14; dy+=2)
-						yield return new BlockToExplore(X+dx,Y+dy,2);
-			}
-			else
-			if (Size == 2)
-			{
-				yield return new BlockToExplore(X + 0, Y + 0, 1);
-				yield return new BlockToExplore(X + 1, Y + 0, 1);
-				yield return new BlockToExplore(X + 0, Y + 1, 1);
-				yield return new BlockToExplore(X + 1, Y + 1, 1);
-			}
+			if (Size==1) yield break;
+
+			// can be 16,8,4,2
+			for (int dx = 0; dx < Size; dx+=Size/2)
+				for (int dy = 0; dy < Size; dy+=Size/2)
+					yield return new BlockToExplore(X+dx,Y+dy,Size/2,this);
 		}
 	}
 
@@ -65,7 +77,8 @@ namespace GoldDigger
 
 	public class LicensePool
 	{
-		private readonly ConcurrentBag<int> _coins;
+		private readonly CancellationTokenSource _poolCts = new CancellationTokenSource();
+		private readonly ConcurrentQueue<int> _coins;
 
 		private readonly Api _api;
 
@@ -80,19 +93,19 @@ namespace GoldDigger
 		private int _longWaits;
 		private int _spentOnLicense;
 
-		public LicensePool(Api api, ConcurrentBag<int> coins, CancellationToken token)
+		public LicensePool(Api api, ConcurrentQueue<int> coins)
 		{
 			_api = api;
 			_coins = coins;
-			_freeLicensePoll = PollFreeLicense(token);
-			_paidLicensePoll = PollPaidLicense(token);
+			_freeLicensePoll = PollFreeLicense(CancellationToken.None);
+			_paidLicensePoll = PollPaidLicense(_poolCts.Token);
 		}
 
 		private IEnumerable<int> TakeCoins(int count)
 		{
 			while (count-- > 0)
 			{
-				if (_coins.TryTake(out var coin))
+				if (_coins.TryDequeue(out var coin))
 					yield return coin;
 			}
 		}
@@ -104,8 +117,16 @@ namespace GoldDigger
 				// price list: 1 coin - 5 digs, 6 coins - 10 digs, 11 coins - 20-29 digs, 21 - 40-49
 				while (!token.IsCancellationRequested)
 				{
-					if (_paidLicense.Count >= 100 || _coins.Count == 0)
+					if (_paidLicense.Count >= 100)
 					{
+						Interlocked.Increment(ref App._licenserWaitingForRequest);
+						await Task.Delay(10);
+						continue;
+					}
+
+					if (_coins.Count == 0)
+					{
+						Interlocked.Increment(ref App._licenserWaitingForMoney);
 						await Task.Delay(10);
 						continue;
 					}
@@ -123,13 +144,13 @@ namespace GoldDigger
 					int retryCount = 0;
 					while (true)
 					{
-						var license = await _api.IssueLicenseAsync(licenseCost, token);
+						var license = await _api.IssueLicenseAsync(licenseCost, CancellationToken.None);
 						if (license != null)
 						{
 							if (license.digAllowed < 0) // no more license allowed error
 							{
 								foreach (var coin in licenseCost)
-									_coins.Add(coin); // add coins back
+									_coins.Enqueue(coin); // add coins back
 								await Task.Delay(10);
 								break;
 							}
@@ -144,7 +165,7 @@ namespace GoldDigger
 						{
 							//Log("Something wrong with paid license: " + ex.Message);
 							foreach (var coin in licenseCost)
-								_coins.Add(coin); // add coins back
+								_coins.Enqueue(coin); // add coins back
 							break;
 						}
 					}
@@ -166,6 +187,7 @@ namespace GoldDigger
 				{
 					if (_freeLicense.Count >= 9)
 					{
+						Interlocked.Increment(ref App._licenserWaitingForRequest);
 						await Task.Delay(10);
 						continue;
 					}
@@ -202,9 +224,14 @@ namespace GoldDigger
 			App.Log("free license poll completed");
 		}
 
-		public (int free, int paid, int waits, int spent) Snapshot()
+		public override string ToString()
 		{
-			return (_freeLicense.Count, _paidLicense.Count, _longWaits, _spentOnLicense);
+			return string.Join('/', new[] {_freeLicense.Count, _paidLicense.Count, _longWaits, _spentOnLicense});
+		}
+
+		public void StopPollingPaidLicenses()
+		{
+			_poolCts.Cancel(false);
 		}
 
 		public void ReturnLicense(int license, bool free)
@@ -225,7 +252,7 @@ namespace GoldDigger
 				// but it is also ok to use paid license
 				while (true)
 				{
-					if (_coins.Count > 1000)
+					if (_coins.Count > 10000)
 					{
 						// prefer paid license if we're good
 						if (_paidLicense.TryDequeue(out license))
@@ -236,6 +263,8 @@ namespace GoldDigger
 						return (license, true);
 					if (_paidLicense.TryDequeue(out license))
 						return (license, false);
+
+					Interlocked.Increment(ref App._diggersWaitingForAnyLicense);
 
 					await Task.Delay(10);
 					if (waitCounter++ > 100)
@@ -250,6 +279,7 @@ namespace GoldDigger
 			// only paid license will do the trick
 			while (!_paidLicense.TryDequeue(out license))
 			{
+				Interlocked.Increment(ref App._diggersWaitingForPaidLicense);
 				await Task.Delay(10);
 				if (waitCounter++ > 100)
 				{
@@ -268,14 +298,25 @@ namespace GoldDigger
 	{
 		private readonly CancellationTokenSource _ctsAppStop = new CancellationTokenSource();
 
-		private readonly ConcurrentBag<int> _coins = new ConcurrentBag<int>();
+		private readonly ConcurrentQueue<int> _coins = new ConcurrentQueue<int>();
 		private readonly List<BlockToExplore> _initialBlocks = new List<BlockToExplore>();
 		private volatile int _currentBlock;
 
 		private readonly ConcurrentQueue<TreasureChest> _recoveredTreasures = new ConcurrentQueue<TreasureChest>();
 		private readonly ConcurrentQueue<TreasureMap> _treasuresToDig = new ConcurrentQueue<TreasureMap>();
 		private readonly ConcurrentQueue<BlockToExplore>[] _secondaryExploreQueue = new ConcurrentQueue<BlockToExplore>[10];
-		private readonly int[] _levelYield = new int[10];
+
+		public static int _explorersWaitingForDiggers = 0;
+		public static int _diggersWaitingForCasher = 0;
+		public static int _diggersWaitingForMaps = 0;
+		public static int _diggersWaitingForPaidLicense = 0;
+		public static int _diggersWaitingForAnyLicense = 0;
+		public static int _licenserWaitingForRequest = 0;
+		public static int _licenserWaitingForMoney = 0;
+		public static int _sellerWaitingForTreasure = 0;
+
+		public static DateTime _end;
+		public static DateTime _lastMinute;
 		private LicensePool _licensePool;
 
 		public static async Task Main()
@@ -293,22 +334,23 @@ namespace GoldDigger
 
 		private async Task Run()
 		{
-			var end = DateTime.Now.AddMinutes(11);
-
-			await Task.Delay(10);
 			var address = Environment.GetEnvironmentVariable("ADDRESS");
 			var uri = new UriBuilder("http", address ?? "localhost", address == null ? 5000 : 8000).Uri;
 			var api = new Api(uri.ToString(), new HttpClient());
 
 			// break down into exploration blocks
-			const int blockSize = 14;
-			for (int x = 0; x < 3500; x+= blockSize)
-			{
-				for (int y = 0; y < 3500; y+= blockSize)
-				{
+			const int blockSize = 16; //218 16 blocks + 3x4
+			for (int x = 0; x < 3488; x+= blockSize)
+				for (int y = 0; y < 3488; y+= blockSize)
 					_initialBlocks.Add(new BlockToExplore(x,y, blockSize));
-				}
-			}
+
+			for (int x = 3488; x < 3500; x += 4)
+				for (int y = 0; y < 3500; y += 4)
+					_initialBlocks.Add(new BlockToExplore(x, y, 4));
+
+			for (int x = 0; x < 3488; x += 4)
+				for (int y = 3488; y < 3500; y += 4)
+					_initialBlocks.Add(new BlockToExplore(x, y, 4));
 
 			foreach (var i in Enumerable.Range(0, 10))
 			{
@@ -322,9 +364,12 @@ namespace GoldDigger
 				await Task.Delay(10);
 			}
 
-			_licensePool = new LicensePool(api, _coins, _ctsAppStop.Token);
+			_end = DateTime.Now.AddMinutes(10);
+			_lastMinute = _end.AddMinutes(-1);
 
-			Log("Ready");
+			_licensePool = new LicensePool(api, _coins);
+			
+			Log($"Ready - 1000 ticks = {TimeSpan.FromTicks(1000).TotalMilliseconds} msec");
 
 			var tasks = new List<Task>();
 
@@ -332,6 +377,8 @@ namespace GoldDigger
 			tasks.Add(Explorer(api, false));
 			tasks.Add(Explorer(api, false));
 			tasks.Add(Explorer(api, false));
+			tasks.Add(Explorer(api, false));
+			tasks.Add(Explorer(api, false));
 			tasks.Add(Digger(api, true));
 			tasks.Add(Digger(api, true));
 			tasks.Add(Digger(api));
@@ -344,17 +391,31 @@ namespace GoldDigger
 			tasks.Add(Seller(api));
 			tasks.Add(Seller(api));
 
-			while (DateTime.Now < end)
+			bool lastMinuteProcessed = false;
+			while (DateTime.Now <= _end)
 			{
 				await Task.Delay(TimeSpan.FromSeconds(10));
-				var lic = api.Stats[0].Snapshot();
-				var exp = api.Stats[1].Snapshot();
-				var dig = api.Stats[2].Snapshot();
-				var cas = api.Stats[3].Snapshot();
-				var licPool = _licensePool.Snapshot();
-				
+				var stat = api.Snapshot();
+				var licPool = _licensePool.ToString();
+
+				int[] waits = new int[8];
+				waits[0] = Interlocked.Exchange(ref _explorersWaitingForDiggers, 0);
+				waits[1] = Interlocked.Exchange(ref _diggersWaitingForCasher, 0);
+				waits[2] = Interlocked.Exchange(ref _diggersWaitingForMaps, 0);
+				waits[3] = Interlocked.Exchange(ref _diggersWaitingForPaidLicense, 0);
+				waits[4] = Interlocked.Exchange(ref _diggersWaitingForAnyLicense, 0);
+				waits[5] = Interlocked.Exchange(ref _licenserWaitingForRequest, 0);
+				waits[6] = Interlocked.Exchange(ref _licenserWaitingForMoney, 0);
+				waits[7] = Interlocked.Exchange(ref _sellerWaitingForTreasure, 0);
+
 				var cb = _currentBlock > _initialBlocks.Count ? -1 : _currentBlock;
-				Log($"lic={lic},exp={exp},dig={dig},cas={cas},pq={cb},sq={string.Join('/', _secondaryExploreQueue.Select(q => q.Count))},maps={_treasuresToDig.Count},tre={_recoveredTreasures.Count},coin={_coins.Count},yld={string.Join('/', _levelYield)},lic_pool={licPool}");
+				Log($"lic={stat[0]},exp={stat[1]},dig={stat[2]},cas={stat[3]},pq={cb},sq={string.Join('/', _secondaryExploreQueue.Select(q => q.Count))},maps={_treasuresToDig.Count},tre={_recoveredTreasures.Count},coin={_coins.Count},lic_pool={licPool},waits={string.Join('/', waits)}");
+
+				if (!lastMinuteProcessed && DateTime.Now >= _lastMinute)
+				{
+					lastMinuteProcessed = true;
+					//_licensePool.StopPollingPaidLicenses(); // 
+				}
 			}
 
 			tasks.Clear();
@@ -372,6 +433,7 @@ namespace GoldDigger
 				{
 					if (!_recoveredTreasures.TryDequeue(out var chest))
 					{
+						Interlocked.Increment(ref _sellerWaitingForTreasure);
 						await Task.Delay(10);
 						continue;
 					}
@@ -382,10 +444,8 @@ namespace GoldDigger
 						var exchangedCoins = await api.CashAsync(chest.Id, _ctsAppStop.Token);
 						if (exchangedCoins != null)
 						{
-							// level yield in coins
-							_levelYield[chest.FromLevel - 1] += exchangedCoins.Length;
 							foreach (var coin in exchangedCoins)
-								_coins.Add(coin);
+								_coins.Enqueue(coin);
 							break;
 						}
 
@@ -413,18 +473,20 @@ namespace GoldDigger
 				{
 					if (!_treasuresToDig.TryDequeue(out var map))
 					{
+						Interlocked.Increment(ref _diggersWaitingForMaps);
 						await Task.Delay(10);
 						continue;
 					}
 
-					if (_recoveredTreasures.Count > 1000)
+					if (_recoveredTreasures.Count > 10000)
 					{
 						// hold on with digging, we have a long treasure exchange queue
+						Interlocked.Increment(ref _diggersWaitingForCasher);
 						await Task.Delay(10);
 						continue;
 					}
 
-					while (map.Amount > 0 && map.Depth <= 6)
+					while (map.Amount > 0 && map.Depth <= 9)
 					{
 						if (map.Depth > 3 && (shallowDigger || _coins.Count == 0))
 						{
@@ -476,10 +538,11 @@ namespace GoldDigger
 			{
 				while (!_ctsAppStop.IsCancellationRequested)
 				{
-					if (_treasuresToDig.Count > 1000)
+					if (_treasuresToDig.Count > 10000 && _coins.Count > 10)
 					{
 						// hold on with exploration, we have a long treasure digging queue
-						await Task.Delay(10);
+						Interlocked.Increment(ref _explorersWaitingForDiggers);
+						await Task.Delay(5);
 						continue;
 					}
 
@@ -493,16 +556,29 @@ namespace GoldDigger
 
 					if (block == null)
 					{
+						repeat:
 						foreach (var q in _secondaryExploreQueue)
 						{
 							if (q.TryDequeue(out block))
+							{
+								if (!block.WorthExploring())
+									goto repeat;
 								break;
+							}
 						}
 
 						if (block == null)
 						{
-							await Task.Delay(10);
-							continue;
+							var curBlockIdx = Interlocked.Increment(ref _currentBlock);
+							if (curBlockIdx < _initialBlocks.Count)
+								block = _initialBlocks[curBlockIdx];
+
+							if (block == null)
+							{
+								// we explored everything?
+								await Task.Delay(10);
+								continue;
+							}
 						}
 					}
 
@@ -514,24 +590,29 @@ namespace GoldDigger
 							_ctsAppStop.Token);
 						if (exploreResult != null)
 						{
-							if (exploreResult.amount == 0)
+							var a = exploreResult.amount;
+							if (a == 0)
 								break;
 
+							block.UpdateAmount(a);
 							if (block.Size == 1)
-								_treasuresToDig.Enqueue(new TreasureMap(block.X, block.Y, exploreResult.amount));
-							else if (block.Size == 14)
 							{
-								if (exploreResult.amount > 18) exploreResult.amount = 18;
-								var priority = 9 - exploreResult.amount / 2;
-
-								foreach (var smallerBlock in block.Break())
-									_secondaryExploreQueue[priority].Enqueue(smallerBlock);
+								_treasuresToDig.Enqueue(new TreasureMap(block.X, block.Y, a));
 							}
-							else if (block.Size == 2)
+							else
 							{
-								var priority = exploreResult.amount > 2 ? 0 : 1;
-								foreach (var smallestBlock in block.Break())
-									_secondaryExploreQueue[priority].Enqueue(smallestBlock);
+								int priority = 0;
+								switch (block.Size)
+								{
+									case 16: priority = 9-Math.Min(a,19)/2; break;
+									case 8:  priority = 9-Math.Min(a,9); break;
+									case 4:  priority = 3-Math.Min(a,3); break;
+									case 2:  priority = a >= 2 ? 0 : 1; break;
+								}
+
+								var q = _secondaryExploreQueue[priority];
+								foreach (var smallerBlock in block.Break())
+									q.Enqueue(smallerBlock);
 							}
 
 							break;
@@ -539,6 +620,13 @@ namespace GoldDigger
 
 						if (retryCount++ > 10)
 						{
+							var a = block.Size switch
+							{
+								16 => 10,
+								8 => 3,
+								_ => 1
+							};
+							block.UpdateAmount(a);
 							foreach (var smallerBlock in block.Break())
 								_secondaryExploreQueue[5].Enqueue(smallerBlock);
 							break; // give up block
