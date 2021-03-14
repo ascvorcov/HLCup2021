@@ -1,8 +1,7 @@
-using System;
-using System.Threading;
-
 namespace GoldDigger
 {
+	using System.Threading;
+
 	public class Stats
 	{
 		private long _data;

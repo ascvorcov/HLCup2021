@@ -1,11 +1,11 @@
-﻿using System;
-using System.IO;
-using System.Threading.Tasks;
-using NSwag;
-using NSwag.CodeGeneration.CSharp;
-
-namespace GoldDigger
+﻿namespace GoldDigger
 {
+	using System;
+	using System.IO;
+	using System.Threading.Tasks;
+	using NSwag;
+	using NSwag.CodeGeneration.CSharp;
+
 	public class CodeGen
 	{
 		public static async Task Run()

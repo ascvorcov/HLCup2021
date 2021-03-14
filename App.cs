@@ -1,13 +1,13 @@
-using System;
-using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.Linq;
-using System.Net.Http;
-using System.Threading;
-using System.Threading.Tasks;
-
 namespace GoldDigger
 {
+	using System;
+	using System.Collections.Concurrent;
+	using System.Collections.Generic;
+	using System.Linq;
+	using System.Net.Http;
+	using System.Threading;
+	using System.Threading.Tasks;
+
 	public class BlockToExplore
 	{
 		private volatile int _amount;
@@ -231,7 +231,7 @@ namespace GoldDigger
 
 		public void StopPollingPaidLicenses()
 		{
-			_poolCts.Cancel(false);
+			_poolCts.Cancel();
 		}
 
 		public void ReturnLicense(int license, bool free)
@@ -286,6 +286,10 @@ namespace GoldDigger
 					Interlocked.Increment(ref _longWaits);
 					//Log("Waited more than 1 second for any paid license");
 					waitCounter = 0;
+					if (DateTime.Now >= App._lastMinute)
+					{
+						return (int.MinValue, false);
+					}
 				}
 			}
 
@@ -414,7 +418,7 @@ namespace GoldDigger
 				if (!lastMinuteProcessed && DateTime.Now >= _lastMinute)
 				{
 					lastMinuteProcessed = true;
-					//_licensePool.StopPollingPaidLicenses(); // 
+					_licensePool.StopPollingPaidLicenses(); // stop paying for licenses during last minute (will eventually stop diggers), exchange remaining treasure
 				}
 			}
 
@@ -469,13 +473,35 @@ namespace GoldDigger
 		{
 			try
 			{
+				bool lastMinute = false;
 				while (!_ctsAppStop.IsCancellationRequested)
 				{
 					if (!_treasuresToDig.TryDequeue(out var map))
 					{
-						Interlocked.Increment(ref _diggersWaitingForMaps);
-						await Task.Delay(10);
-						continue;
+						BlockToExplore block = null;
+						foreach (var q in _secondaryExploreQueue)
+						{
+							if (q.TryDequeue(out block))
+							{
+								if (block.Size == 2)
+									break;
+								q.Enqueue(block);
+							}
+						}
+
+						if (block == null)
+						{
+							Interlocked.Increment(ref _diggersWaitingForMaps);
+							await Task.Delay(10);
+							continue;
+						}
+
+						block.UpdateAmount(1);
+						var oneBlocks = block.Break().ToArray();
+						_treasuresToDig.Enqueue(new TreasureMap(oneBlocks[0].X, oneBlocks[0].Y, 1));
+						_treasuresToDig.Enqueue(new TreasureMap(oneBlocks[1].X, oneBlocks[1].Y, 1));
+						_treasuresToDig.Enqueue(new TreasureMap(oneBlocks[2].X, oneBlocks[2].Y, 1));
+						map = new TreasureMap(oneBlocks[3].X, oneBlocks[3].Y, 1); 
 					}
 
 					if (_recoveredTreasures.Count > 10000)
@@ -488,13 +514,18 @@ namespace GoldDigger
 
 					while (map.Amount > 0 && map.Depth <= 9)
 					{
-						if (map.Depth > 3 && (shallowDigger || _coins.Count == 0))
+						if (map.Depth > 3 && (shallowDigger || _coins.Count == 0 || lastMinute))
 						{
 							_treasuresToDig.Enqueue(map);
 							break; // give up on this treasure
 						}
 
 						var (license, free) = await _licensePool.GetLicense(map.Depth);
+						if (license == int.MinValue && !free)
+						{
+							lastMinute = true;
+							break; // reached last minute, digging only free
+						}
 
 						int digRetryCounter = 0;
 						while (true)
@@ -538,6 +569,9 @@ namespace GoldDigger
 			{
 				while (!_ctsAppStop.IsCancellationRequested)
 				{
+					if (DateTime.Now > _lastMinute)
+						break;
+
 					if (_treasuresToDig.Count > 10000 && _coins.Count > 10)
 					{
 						// hold on with exploration, we have a long treasure digging queue
