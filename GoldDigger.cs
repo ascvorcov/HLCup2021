@@ -82,7 +82,7 @@ namespace GoldDigger
                 await _httpClient.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, token);
             if (response.IsSuccessStatusCode)
             {
-                _stats[stats].Success(w.ElapsedTicks);
+                _stats[stats].Success(w.ElapsedMilliseconds);
                 return Utf8Json.JsonSerializer.Deserialize<TOut>(await response.Content.ReadAsStreamAsync(token));
             }
 
@@ -91,7 +91,7 @@ namespace GoldDigger
                 return custom;
             }
 
-            _stats[stats].Fail(w.ElapsedTicks);
+            _stats[stats].Fail(w.ElapsedMilliseconds);
             if (response.StatusCode == HttpStatusCode.UnprocessableEntity)
             {
                 App.Log("Error:" + await response.Content.ReadAsStringAsync(token));

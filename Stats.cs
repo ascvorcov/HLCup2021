@@ -22,16 +22,16 @@ namespace GoldDigger
 			return string.Join('/', new[] { total, fails, elSuccAvg, elFailAvg });
 		}
 
-		public void Success(long ticks)
+		public void Success(long elapsedMsec)
 		{
 			Interlocked.Add(ref _data, 1);
-			Interlocked.Add(ref _elapsedSuccess, ticks);
+			Interlocked.Add(ref _elapsedSuccess, elapsedMsec);
 		}
 
-		public void Fail(long ticks)
+		public void Fail(long elapsedMsec)
 		{
 			Interlocked.Add(ref _data, 0x0000000100000001);
-			Interlocked.Add(ref _elapsedFails, ticks);
+			Interlocked.Add(ref _elapsedFails, elapsedMsec);
 		}
 	}
 }

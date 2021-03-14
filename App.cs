@@ -373,7 +373,7 @@ namespace GoldDigger
 
 			_licensePool = new LicensePool(api, _coins);
 			
-			Log($"Ready - 1000 ticks = {TimeSpan.FromTicks(1000).TotalMilliseconds} msec");
+			Log($"Ready - 10000 ticks = {TimeSpan.FromTicks(10000).TotalMilliseconds} msec");
 
 			var tasks = new List<Task>();
 
@@ -486,6 +486,7 @@ namespace GoldDigger
 								if (block.Size == 2)
 									break;
 								q.Enqueue(block);
+								block = null;
 							}
 						}
 
@@ -501,7 +502,7 @@ namespace GoldDigger
 						_treasuresToDig.Enqueue(new TreasureMap(oneBlocks[0].X, oneBlocks[0].Y, 1));
 						_treasuresToDig.Enqueue(new TreasureMap(oneBlocks[1].X, oneBlocks[1].Y, 1));
 						_treasuresToDig.Enqueue(new TreasureMap(oneBlocks[2].X, oneBlocks[2].Y, 1));
-						map = new TreasureMap(oneBlocks[3].X, oneBlocks[3].Y, 1); 
+						map = new TreasureMap(oneBlocks[3].X, oneBlocks[3].Y, 1);
 					}
 
 					if (_recoveredTreasures.Count > 10000)
