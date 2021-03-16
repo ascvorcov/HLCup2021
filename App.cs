@@ -236,13 +236,6 @@ namespace GoldDigger
 				// but it is also ok to use paid license
 				while (true)
 				{
-					if (_coins.Count > 10000)
-					{
-						// prefer paid license if we're good
-						if (_paidLicense.TryDequeue(out license))
-							return license;
-					}
-
 					if (_freeLicense.TryDequeue(out license))
 						return license;
 					if (_paidLicense.TryDequeue(out license))
