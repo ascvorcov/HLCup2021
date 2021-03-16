@@ -77,7 +77,6 @@ namespace GoldDigger
 
 	public class LicensePool
 	{
-		private readonly CancellationTokenSource _poolCts = new CancellationTokenSource();
 		private readonly ConcurrentQueue<int> _coins;
 
 		private readonly Api _api;
@@ -86,10 +85,6 @@ namespace GoldDigger
 
 		private readonly ConcurrentQueue<int> _paidLicense = new ConcurrentQueue<int>();
 
-		private readonly Task _freeLicensePoll;
-		
-		private readonly Task _paidLicensePoll;
-
 		private int _longWaits;
 		private int _spentOnLicense;
 
@@ -97,8 +92,6 @@ namespace GoldDigger
 		{
 			_api = api;
 			_coins = coins;
-			_freeLicensePoll = PollFreeLicense(CancellationToken.None);
-			_paidLicensePoll = PollPaidLicense(_poolCts.Token);
 		}
 
 		private IEnumerable<int> TakeCoins(int count)
@@ -110,7 +103,7 @@ namespace GoldDigger
 			}
 		}
 
-		private async Task PollPaidLicense(CancellationToken token)
+		public async Task PollPaidLicense(CancellationToken token)
 		{
 			try
 			{
@@ -176,11 +169,9 @@ namespace GoldDigger
 			{
 				App.Log("poll paid license error:" + ex.Message);
 			}
-
-			App.Log("paid license poll completed");
 		}
 
-		private async Task PollFreeLicense(CancellationToken token)
+		public async Task PollFreeLicense(CancellationToken token)
 		{
 			try
 			{
@@ -222,18 +213,11 @@ namespace GoldDigger
 			{
 				App.Log("poll free license error:" + ex.Message);
 			}
-
-			App.Log("free license poll completed");
 		}
 
 		public override string ToString()
 		{
 			return string.Join('/', new[] {_freeLicense.Count, _paidLicense.Count, _longWaits, _spentOnLicense});
-		}
-
-		public void StopPollingPaidLicenses()
-		{
-			_poolCts.Cancel();
 		}
 
 		public void ReturnLicense(int license, bool free)
@@ -282,16 +266,12 @@ namespace GoldDigger
 			while (!_paidLicense.TryDequeue(out license))
 			{
 				Interlocked.Increment(ref App._diggersWaitingForPaidLicense);
-				if (_poolCts.IsCancellationRequested)
-				{
-					return (int.MinValue, false);
-				}
+
 				await Task.Delay(10);
 				if (waitCounter++ > 100)
 				{
 					Interlocked.Increment(ref _longWaits);
-					waitCounter = 0;
-
+					return (int.MinValue, false); //maybe worth looking for some other work, requiring free license
 				}
 			}
 
@@ -381,45 +361,49 @@ namespace GoldDigger
 			
 			Log($"Ready - 10000 ticks = {TimeSpan.FromTicks(10000).TotalMilliseconds} msec");
 
-			var activeExplorers = new List<(Task,CancellationTokenSource)>();
+			var activeSeekers = new List<(Task,CancellationTokenSource)>();
 			var activeDiggers = new List<(Task, CancellationTokenSource)>();
 			var activeSellers = new List<(Task, CancellationTokenSource)>();
+			var activeFreeLic = new List<(Task, CancellationTokenSource)>();
+			var activePaidLic = new List<(Task, CancellationTokenSource)>();
 
 
 			// for 10 minutes
 			var plan = new[]
 			{
-				// explorers, diggers, sellers
-				new[] {10, 2, 0},
-				new[] {10, 2, 0},
-				new[] {10, 2, 1},
-				new[] {6, 10, 1},
-				new[] {5, 10, 1},
-				new[] {4, 10, 1},
-				new[] {3, 8, 1},
-				new[] {2, 6, 2},
-				new[] {0, 4, 3},
-				new[] {0, 1, 4}
+				// seekers, diggers, sellers, freelic, paidlic
+				new[] {10, 2, 0, 2, 0},
+				new[] {10, 2, 0, 2, 0},
+				new[] {10, 2, 1, 1, 1},
+				new[] {6, 10, 1, 1, 3},
+				new[] {5, 10, 1, 1, 3},
+				new[] {4, 10, 1, 0 ,3},
+				new[] {3, 8, 1, 0, 2},
+				new[] {2, 6, 3, 0, 2},
+				new[] {0, 4, 4, 0, 0},
+				new[] {0, 1, 5, 0, 0}
 			};
 
 			int secondsPassed = 0;
 			while (DateTime.Now <= _end)
 			{
 				var currentMinute = secondsPassed / 60;
-				int explorers = plan[currentMinute][0];
+				int seekers = plan[currentMinute][0];
 				int diggers = plan[currentMinute][1];
 				int sellers = plan[currentMinute][2];
-				while (explorers != activeExplorers.Count)
+				int freeLic = plan[currentMinute][3];
+				int paidLic = plan[currentMinute][4];
+				while (seekers != activeSeekers.Count)
 				{
-					if (explorers > activeExplorers.Count)
+					if (seekers > activeSeekers.Count)
 					{
 						var cts = new CancellationTokenSource();
-						activeExplorers.Add((Explorer(api, activeExplorers.Count == 0, cts.Token), cts));
+						activeSeekers.Add((Explorer(api, activeSeekers.Count == 0, cts.Token), cts));
 					}
 					else
 					{
-						var last = activeExplorers.Last();
-						activeExplorers.RemoveAt(activeExplorers.Count-1);
+						var last = activeSeekers.Last();
+						activeSeekers.RemoveAt(activeSeekers.Count-1);
 						last.Item2.Cancel();
 					}
 				}
@@ -454,9 +438,34 @@ namespace GoldDigger
 					}
 				}
 
-				if (secondsPassed == 500)
+				while (freeLic != activeFreeLic.Count)
 				{
-					_licensePool.StopPollingPaidLicenses();
+					if (freeLic > activeFreeLic.Count)
+					{
+						var cts = new CancellationTokenSource();
+						activeFreeLic.Add((_licensePool.PollFreeLicense(cts.Token), cts));
+					}
+					else
+					{
+						var last = activeFreeLic.Last();
+						activeFreeLic.RemoveAt(activeFreeLic.Count - 1);
+						last.Item2.Cancel();
+					}
+				}
+				
+				while (paidLic != activePaidLic.Count)
+				{
+					if (paidLic > activePaidLic.Count)
+					{
+						var cts = new CancellationTokenSource();
+						activePaidLic.Add((_licensePool.PollPaidLicense(cts.Token), cts));
+					}
+					else
+					{
+						var last = activePaidLic.Last();
+						activePaidLic.RemoveAt(activePaidLic.Count - 1);
+						last.Item2.Cancel();
+					}
 				}
 
 				await Task.Delay(TimeSpan.FromSeconds(10));
@@ -600,8 +609,6 @@ namespace GoldDigger
 			{
 				while (!token.IsCancellationRequested)
 				{
-
-
 					BlockToExplore block = null;
 					if (preferPrimaryQueue)
 					{
