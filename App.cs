@@ -416,16 +416,16 @@ namespace GoldDigger
 			var plan = new[]
 			{
 				// seekers, diggers, sellers, freelic, paidlic
-				new[] {12, 2, 0, 2, 0},
-				new[] {12, 2, 0, 2, 0},
-				new[] {12, 2, 1, 1, 1},
-				new[] {8, 12, 1, 1, 3},
-				new[] {7, 12, 1, 1, 3},
-				new[] {4, 12, 1, 0 ,3},
-				new[] {0, 8, 2, 0, 2},
-				new[] {0, 6, 4, 0, 2},
-				new[] {0, 4, 6, 0, 0},
-				new[] {0, 1, 8, 0, 0}
+				new[] {8, 6, 1, 1, 2},
+				new[] {8, 6, 1, 1, 2},
+				new[] {8, 6, 1, 1, 2},
+				new[] {8, 6, 1, 1, 2},
+				new[] {8, 6, 1, 0, 2},
+				new[] {8, 6, 1, 0, 2},
+				new[] {8, 6, 2, 0, 2},
+				new[] {0, 6, 3, 0, 2},
+				new[] {0, 6, 3, 0, 0},
+				new[] {0, 0, 3, 0, 0}
 			};
 
 			int secondsPassed = 0;
@@ -457,7 +457,7 @@ namespace GoldDigger
 					if (diggers > activeDiggers.Count)
 					{
 						var cts = new CancellationTokenSource();
-						activeDiggers.Add((Digger(api, diggers == 2, cts.Token), cts));
+						activeDiggers.Add((Digger(api, false, cts.Token), cts));
 					}
 					else
 					{
@@ -598,7 +598,7 @@ namespace GoldDigger
 						continue;
 					}
 
-					while (map.Amount > 0 && map.Depth <= 9)
+					while (map.Amount > 0 && map.Depth <= 10)
 					{
 						if (map.Depth > 3 && (shallowDigger || _coins.Count == 0))
 						{
