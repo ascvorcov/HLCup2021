@@ -141,9 +141,9 @@ namespace GoldDigger
 
 					var cost = _coins.Count switch
 					{
-						>= 10000 => 21,
-						>= 5000 => 11,
-						>= 1000 => 5,
+						//>= 10000 => 21,
+						//>= 5000 => 11,
+						>= 1000 => 21,
 						_ => 1
 					};
 
@@ -634,7 +634,7 @@ namespace GoldDigger
 							{
 								license.Discard();
 								foreach (var tr in treasures)
-									_recoveredTreasures[map.Depth].Enqueue(new TreasureChest {Id = tr, FromLevel = map.Depth});
+									_recoveredTreasures[map.Depth-1].Enqueue(new TreasureChest {Id = tr, FromLevel = map.Depth});
 
 								Interlocked.Add(ref _treasureDugOutTotal, treasures.Length);
 								map.Depth++;
