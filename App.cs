@@ -11,6 +11,7 @@ namespace GoldDigger
 	public class BlockToExplore
 	{
 		private volatile int _amount;
+		private volatile int _explored;
 		public BlockToExplore(int x, int y, int size, BlockToExplore parent = null)
 		{
 			X = x;
@@ -24,22 +25,33 @@ namespace GoldDigger
 		public int Size { get; }
 		public BlockToExplore Parent { get; }
 
+		public int GetAmount() => _amount;
+
 		public void UpdateAmount(int amount)
 		{
 			_amount = amount;
 			if (Parent != null)
-				Interlocked.Add(ref Parent._amount, -amount);
+			{
+				Interlocked.Increment(ref Parent._explored);
+				if (amount != 0)
+					Interlocked.Add(ref Parent._amount, -amount);
+			}
 		}
 
-		public bool WorthExploring()
+		public enum Decision { Discard, Explore, Promote }
+		public Decision WorthExploring()
 		{
-			if (Parent == null) return true;
-			var a = Parent._amount;
-			if (a <= 0) return false;
+			if (Parent != null)
+			{
+				var a = Parent._amount;
+				var e = Parent._explored;
+				if (a <= 0) return Decision.Discard; // no treasure in remaining unexplored blocks
+				if (e == 3) return Decision.Promote; // all 3 other blocks are explored, and there is still some treasure - do not explore, just break down into 4 blocks
 
-			if (Size == 8 && a == 1) return false;
+				if (Size == 8 && a == 1) return Decision.Discard;
+			}
 
-			return true;
+			return Decision.Explore;
 		}
 
 		public IEnumerable<BlockToExplore> Break()
@@ -414,11 +426,11 @@ namespace GoldDigger
 				new[] {8, 6, 1, 1, 2},
 				new[] {8, 6, 1, 1, 2},
 				new[] {8, 6, 1, 0, 2},
-				new[] {8, 6, 1, 0, 2},
 				new[] {8, 6, 2, 0, 2},
-				new[] {0, 6, 3, 0, 2},
-				new[] {0, 6, 3, 0, 0},
-				new[] {0, 0, 3, 0, 0}
+				new[] {8, 6, 2, 0, 2},
+				new[] {0, 6, 2, 1, 0},
+				new[] {0, 0, 2, 0, 0},
+				new[] {0, 0, 2, 0, 0}
 			};
 
 			int secondsPassed = 0;
@@ -661,9 +673,13 @@ namespace GoldDigger
 						{
 							if (q.TryDequeue(out block))
 							{
-								if (!block.WorthExploring())
+								var decision = block.WorthExploring();
+								if (decision == BlockToExplore.Decision.Discard)
 									goto repeat;
-								break;
+								if (decision == BlockToExplore.Decision.Promote)
+									PromoteBlock(block, block.Parent.GetAmount());
+								else
+									break;
 							}
 						}
 
@@ -689,32 +705,7 @@ namespace GoldDigger
 							_ctsAppStop.Token);
 						if (exploreResult != null)
 						{
-							var a = exploreResult.amount;
-							if (a == 0)
-								break;
-
-							block.UpdateAmount(a);
-							if (block.Size == 1)
-							{
-								Interlocked.Increment(ref _mapsDiscoveredTotal);
-								_treasuresToDig.Enqueue(new TreasureMap(block.X, block.Y, a));
-							}
-							else
-							{
-								int priority = 0;
-								switch (block.Size)
-								{
-									case 16: priority = 9-Math.Min(a,19)/2; break;
-									case 8:  priority = 9-Math.Min(a,9); break;
-									case 4:  priority = 3-Math.Min(a,3); break;
-									case 2:  priority = a >= 2 ? 0 : 1; break;
-								}
-
-								var q = _secondaryExploreQueue[priority];
-								foreach (var smallerBlock in block.Break())
-									q.Enqueue(smallerBlock);
-							}
-
+							PromoteBlock(block, exploreResult.amount);
 							break;
 						}
 
@@ -737,6 +728,34 @@ namespace GoldDigger
 			catch (Exception ex)
 			{
 				Log("explorer error:" + ex.Message);
+			}
+
+			void PromoteBlock(BlockToExplore blk, int a)
+			{
+				blk.UpdateAmount(a);
+				if (a == 0)
+					return;
+
+				if (blk.Size == 1)
+				{
+					Interlocked.Increment(ref _mapsDiscoveredTotal);
+					_treasuresToDig.Enqueue(new TreasureMap(blk.X, blk.Y, a));
+				}
+				else
+				{
+					int priority = 0;
+					switch (blk.Size)
+					{
+						case 16: priority = 9 - Math.Min(a, 19) / 2; break;
+						case 8: priority = 9 - Math.Min(a, 9); break;
+						case 4: priority = 3 - Math.Min(a, 3); break;
+						case 2: priority = a >= 2 ? 0 : 1; break;
+					}
+
+					var q = _secondaryExploreQueue[priority];
+					foreach (var smallerBlock in blk.Break())
+						q.Enqueue(smallerBlock);
+				}
 			}
 		}
 
