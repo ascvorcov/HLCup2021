@@ -338,9 +338,11 @@ namespace GoldDigger
 		private readonly List<BlockToExplore> _initialBlocks = new List<BlockToExplore>();
 		private volatile int _currentBlock;
 
-		private readonly ConcurrentQueue<TreasureChest> _recoveredTreasures = new ConcurrentQueue<TreasureChest>();
-		private readonly ConcurrentQueue<TreasureMap> _treasuresToDig = new ConcurrentQueue<TreasureMap>();
-		private readonly ConcurrentQueue<BlockToExplore>[] _secondaryExploreQueue = new ConcurrentQueue<BlockToExplore>[10];
+		private readonly ConcurrentQueue<TreasureChest>[] _recoveredTreasures = Enumerable.Repeat(0,10).Select(x => new ConcurrentQueue<TreasureChest>()).ToArray();
+		private readonly ConcurrentQueue<BlockToExplore>[] _secondaryExploreQueue = Enumerable.Repeat(0, 10).Select(x => new ConcurrentQueue<BlockToExplore>()).ToArray();
+
+		private readonly ConcurrentQueue<TreasureMap> _treasuresToDig1 = new ConcurrentQueue<TreasureMap>();
+		private readonly ConcurrentQueue<TreasureMap> _treasuresToDig2 = new ConcurrentQueue<TreasureMap>();
 
 		public static int _mapsDiscoveredTotal;
 		public static int _treasureDugOutTotal;
@@ -381,14 +383,9 @@ namespace GoldDigger
 
 			// break down into exploration blocks
 			const int blockSize = 8;
-			for (int x = 0; x < 3500-blockSize; x+= blockSize)
+			for (int x = 0; x < 3500 - blockSize; x+= blockSize)
 				for (int y = 0; y < 3500 - blockSize; y+= blockSize)
 					_initialBlocks.Add(new BlockToExplore(x,y, blockSize));
-
-			foreach (var i in Enumerable.Range(0, 10))
-			{
-				_secondaryExploreQueue[i] = new ConcurrentQueue<BlockToExplore>();
-			}
 
 			Shuffle(_initialBlocks);
 
@@ -534,7 +531,8 @@ namespace GoldDigger
 				});
 
 				var cb = _currentBlock > _initialBlocks.Count ? -1 : _currentBlock;
-				Log($"lic={stat[0]},exp={stat[1]},dig={stat[2]},cas={stat[3]},pq={cb},stream={inStream},maps={_treasuresToDig.Count},tre={_recoveredTreasures.Count},coin={_coins.Count},lic_pool={licPool},waits={string.Join('/', waits)}");
+				var tre = string.Join('/', _recoveredTreasures.Select(x => x.Count));
+				Log($"lic={stat[0]},exp={stat[1]},dig={stat[2]},cas={stat[3]},pq={cb},stream={inStream},maps1={_treasuresToDig1.Count},maps2={_treasuresToDig2.Count},tre={tre},coin={_coins.Count},lic_pool={licPool},waits={string.Join('/', waits)}");
 			}
 
 			_ctsAppStop.Cancel();
@@ -549,7 +547,18 @@ namespace GoldDigger
 			{
 				while (!token.IsCancellationRequested)
 				{
-					if (!_recoveredTreasures.TryDequeue(out var chest))
+					TreasureChest chest = null;
+					ConcurrentQueue<TreasureChest> sourceQueue = null;
+					foreach (var q in _recoveredTreasures)
+					{
+						sourceQueue = q;
+						if (q.TryDequeue(out chest))
+							break;
+						chest = null;
+						sourceQueue = null;
+					}
+
+					if (chest == null)
 					{
 						Interlocked.Increment(ref _sellerWaitingForTreasure);
 						await Task.Delay(10);
@@ -570,7 +579,7 @@ namespace GoldDigger
 
 						if (++retry > 10)
 						{
-							_recoveredTreasures.Enqueue(chest); // give up
+							sourceQueue.Enqueue(chest); // give up
 							break;
 						}
 					}
@@ -588,25 +597,30 @@ namespace GoldDigger
 			{
 				while (!diggerCts.IsCancellationRequested)
 				{
-					if (!_treasuresToDig.TryDequeue(out var map))
+					var sourceQueue = _treasuresToDig1;
+					if (!_treasuresToDig1.TryDequeue(out var map))
 					{
-						Interlocked.Increment(ref _diggersWaitingForMaps);
-						await Task.Delay(10);
-						continue;
+						sourceQueue = _treasuresToDig2;
+						if (!_treasuresToDig2.TryDequeue(out map))
+						{
+							Interlocked.Increment(ref _diggersWaitingForMaps);
+							await Task.Delay(10);
+							continue;
+						}
 					}
 
 					while (map.Amount > 0 && map.Depth <= 10)
 					{
 						if (map.Depth > 3 && (shallowDigger || _coins.Count == 0))
 						{
-							_treasuresToDig.Enqueue(map);
+							sourceQueue.Enqueue(map);
 							break; // give up on this treasure
 						}
 
 						var license = await _licensePool.GetLicense(map.Depth);
 						if (license == null)
 						{
-							_treasuresToDig.Enqueue(map);
+							sourceQueue.Enqueue(map);
 							break; // give up on this treasure
 						}
 
@@ -620,7 +634,7 @@ namespace GoldDigger
 							{
 								license.Discard();
 								foreach (var tr in treasures)
-									_recoveredTreasures.Enqueue(new TreasureChest {Id = tr, FromLevel = map.Depth});
+									_recoveredTreasures[map.Depth].Enqueue(new TreasureChest {Id = tr, FromLevel = map.Depth});
 
 								Interlocked.Add(ref _treasureDugOutTotal, treasures.Length);
 								map.Depth++;
@@ -631,7 +645,7 @@ namespace GoldDigger
 							if (digRetryCounter++ > 10)
 							{
 								license.Return();
-								_treasuresToDig.Enqueue(map);
+								sourceQueue.Enqueue(map);
 								break; // give up on this treasure
 							}
 						}
@@ -731,7 +745,11 @@ namespace GoldDigger
 				if (blk.Size == 1)
 				{
 					Interlocked.Increment(ref _mapsDiscoveredTotal);
-					_treasuresToDig.Enqueue(new TreasureMap(blk.X, blk.Y, a));
+					var map = new TreasureMap(blk.X, blk.Y, a);
+					if (a > 1)
+						_treasuresToDig1.Enqueue(map);
+					else
+						_treasuresToDig2.Enqueue(map);
 				}
 				else
 				{
