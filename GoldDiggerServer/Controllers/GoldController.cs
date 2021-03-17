@@ -1,11 +1,9 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Linq;
-using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 
-namespace goldserver.Controllers
+namespace GoldServer.Controllers
 {
     [ApiController]
     public class GoldController : ControllerBase
@@ -82,7 +80,7 @@ namespace goldserver.Controllers
         {
           //_logger.LogInformation($"Digging at {dig?.posX}:{dig?.posY}, depth {dig.depth}, with license {dig.licenseID}");
 
-          return (map[dig.posY,dig.posY] & (1 << (dig.depth-1))) > 0 ? Ok(new string[] { (dig.depth).ToString() }) : NotFound();
+          return (map[dig.posY,dig.posY] & (1 << (dig.depth-1))) > 0 ? Ok(new[] { (dig.depth).ToString() }) : (IActionResult)NotFound();
         }
 
         [HttpPost("cash")]
