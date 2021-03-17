@@ -380,18 +380,10 @@ namespace GoldDigger
 			var api = new Api(uri.ToString(), new HttpClient());
 
 			// break down into exploration blocks
-			const int blockSize = 16; //218 16 blocks + 3x4
-			for (int x = 0; x < 3488; x+= blockSize)
-				for (int y = 0; y < 3488; y+= blockSize)
+			const int blockSize = 8;
+			for (int x = 0; x < 3500-blockSize; x+= blockSize)
+				for (int y = 0; y < 3500 - blockSize; y+= blockSize)
 					_initialBlocks.Add(new BlockToExplore(x,y, blockSize));
-
-			for (int x = 3488; x < 3500; x += 4)
-				for (int y = 0; y < 3500; y += 4)
-					_initialBlocks.Add(new BlockToExplore(x, y, 4));
-
-			for (int x = 0; x < 3488; x += 4)
-				for (int y = 3488; y < 3500; y += 4)
-					_initialBlocks.Add(new BlockToExplore(x, y, 4));
 
 			foreach (var i in Enumerable.Range(0, 10))
 			{
