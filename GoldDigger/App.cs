@@ -411,7 +411,7 @@ namespace GoldDigger
 			{
 				// seekers, diggers, sellers, freelic, paidlic
 				new[] {8, 6, 1, 1, 2},
-				new[] {8, 6, 1, 1, 2},
+				new[] {8, 6, 1, 0, 2},
 				new[] {8, 6, 1, 0, 2},
 				new[] {8, 6, 1, 0, 2},
 				new[] {8, 6, 1, 0, 2},
