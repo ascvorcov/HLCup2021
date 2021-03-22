@@ -382,7 +382,7 @@ namespace GoldDigger
 			var api = new Api(uri.ToString(), new HttpClient());
 
 			// break down into exploration blocks
-			const int blockSize = 8;
+			const int blockSize = 4;
 			for (int x = 0; x < 3500 - blockSize; x+= blockSize)
 				for (int y = 0; y < 3500 - blockSize; y+= blockSize)
 					_initialBlocks.Add(new BlockToExplore(x,y, blockSize));

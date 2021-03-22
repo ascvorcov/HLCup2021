@@ -65,9 +65,10 @@ namespace GoldServer.Controllers
         [HttpPost("explore")]
         public IActionResult Explore([FromBody] Area area)
         {
-          if (area.posX >= 3500 || area.posY >= 3500) throw new Exception("Bad coordinates");
+          if (area.posX + area.sizeX >= 3500 || area.posY + area.sizeY >= 3500) 
+            throw new Exception("Bad coordinates");
           //_logger.LogInformation($"Exploring area {area?.sizeX}x{area?.sizeY} at {area?.posX}:{area?.posY}");
-          int ret = 0;
+            int ret = 0;
           for (int x = area.posX; x < area.posX + area.sizeX; ++x)
             for (int y = area.posY; y < area.posY + area.sizeY; ++y)
               if (map[y,x] > 0) ret++;
