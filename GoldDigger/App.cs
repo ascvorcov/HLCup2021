@@ -359,6 +359,7 @@ namespace GoldDigger
 		public static int _licenserWaitingForMoney;
 		public static int _sellerWaitingForTreasure;
 
+		public static DateTime _start;
 		public static DateTime _end;
 		private LicensePool _licensePool;
 
@@ -394,7 +395,8 @@ namespace GoldDigger
 				await Task.Delay(10);
 			}
 
-			_end = DateTime.Now.AddMinutes(10);
+			_start = DateTime.Now;
+			_end = _start.AddMinutes(10);
 
 			_licensePool = new LicensePool(api, _coins);
 			
@@ -415,7 +417,7 @@ namespace GoldDigger
 				new[] {8, 6, 1, 0, 2},
 				new[] {8, 6, 1, 0, 2},
 				new[] {8, 6, 1, 0, 2},
-				new[] {8, 6, 2, 0, 2},
+				new[] {4, 6, 2, 0, 2},
 				new[] {4, 6, 2, 0, 2},
 				new[] {0, 4, 2, 1, 1},
 				new[] {0, 2, 2, 1, 0},
@@ -563,6 +565,12 @@ namespace GoldDigger
 						Interlocked.Increment(ref _sellerWaitingForTreasure);
 						await Task.Delay(10);
 						continue;
+					}
+
+					var now = DateTime.Now;
+					if (now < _end.AddMinutes(-4) && now > _start.AddSeconds(10))
+					{
+						await Task.Delay(95);
 					}
 
 					int retry = 0;
