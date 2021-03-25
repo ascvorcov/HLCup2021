@@ -143,8 +143,7 @@ namespace GoldDigger
 					{
 						<= 50 => 1,
 						<= 100 => 5,
-						<= 300 => 11,
-						_ => 21
+						_ => 11 // seem to have better result than 21
 					};
 
 					var licenseCost = TakeCoins(cost).ToArray();
@@ -164,7 +163,7 @@ namespace GoldDigger
 							}
 
 							Interlocked.Add(ref _spentOnLicense,  licenseCost.Length);
-							Interlocked.Add(ref App._paidLicenseReceivedTotal, license.digAllowed);
+							Interlocked.Add(ref App._licenseReceivedTotal, license.digAllowed);
 							found.Unlock(license.digAllowed);
 							foreach (var lic in Enumerable.Repeat(license.id, license.digAllowed))
 								_paidLicense.Enqueue(new LicenseWrapper(lic, false, found));
@@ -215,7 +214,7 @@ namespace GoldDigger
 								break;
 							}
 
-							Interlocked.Increment(ref App._freeLicenseReceivedTotal);
+							Interlocked.Increment(ref App._licenseReceivedTotal);
 							found.Unlock(license.digAllowed);
 							foreach (var lic in Enumerable.Repeat(license.id, license.digAllowed))
 								_freeLicense.Enqueue(new LicenseWrapper(lic, true, found));
@@ -347,8 +346,8 @@ namespace GoldDigger
 		public static int _mapsDiscoveredTotal;
 		public static int _treasureDugOutTotal;
 		public static int _coinsRetrievedTotal;
-		public static int _freeLicenseReceivedTotal;
-		public static int _paidLicenseReceivedTotal;
+		public static int _mapsProcessedByDiggersTotal;
+		public static int _licenseReceivedTotal;
 
 		public static int _explorersWaitingForDiggers;
 		public static int _diggersWaitingForCasher;
@@ -419,8 +418,8 @@ namespace GoldDigger
 				new[] {8, 6, 1, 0, 2},
 				new[] {4, 6, 2, 0, 2},
 				new[] {4, 6, 2, 0, 2},
-				new[] {0, 4, 2, 1, 1},
-				new[] {0, 2, 2, 1, 0},
+				new[] {0, 0, 2, 0, 0},
+				new[] {0, 0, 2, 0, 0},
 				new[] {0, 0, 2, 0, 0}
 			};
 
@@ -453,7 +452,7 @@ namespace GoldDigger
 					if (diggers > activeDiggers.Count)
 					{
 						var cts = new CancellationTokenSource();
-						activeDiggers.Add((Digger(api, false, cts.Token), cts));
+						activeDiggers.Add((Digger(api, cts.Token), cts));
 					}
 					else
 					{
@@ -528,8 +527,8 @@ namespace GoldDigger
 					_mapsDiscoveredTotal,
 					_treasureDugOutTotal,
 					_coinsRetrievedTotal,
-					_freeLicenseReceivedTotal,
-					_paidLicenseReceivedTotal
+					_licenseReceivedTotal,
+					_mapsProcessedByDiggersTotal
 				});
 
 				var cb = _currentBlock > _initialBlocks.Count ? -1 : _currentBlock;
@@ -599,7 +598,7 @@ namespace GoldDigger
 			}
 		}
 
-		public async Task Digger(Api api, bool shallowDigger, CancellationToken diggerCts)
+		public async Task Digger(Api api, CancellationToken diggerCts)
 		{
 			try
 			{
@@ -617,9 +616,10 @@ namespace GoldDigger
 						}
 					}
 
+					Interlocked.Increment(ref _mapsProcessedByDiggersTotal);
 					while (map.Amount > 0 && map.Depth <= 10)
 					{
-						if (map.Depth > 3 && (shallowDigger || _coins.Count == 0))
+						if (map.Depth > 3 && _coins.Count == 0)
 						{
 							sourceQueue.Enqueue(map);
 							break; // give up on this treasure
