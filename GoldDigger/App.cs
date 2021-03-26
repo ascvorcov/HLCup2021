@@ -8,6 +8,54 @@ namespace GoldDigger
 	using System.Threading;
 	using System.Threading.Tasks;
 
+	public class Nonogramm
+	{
+		private readonly int[] _rows;
+		private readonly int[] _cols;
+		private readonly int _sx;
+		private readonly int _sy;
+		private int _total;
+
+		public Nonogramm(int[] rows, int[] cols, int sx, int sy)
+		{
+			_rows = rows;
+			_cols = cols;
+			_sx = sx;
+			_sy = sy;
+			_total = rows.Sum();
+		}
+
+		public void ReportFound(int amount, int x, int y)
+		{
+			var ix = x - _sx;
+			var iy = y - _sy;
+			_rows[iy] -= amount;
+			_cols[ix] -= amount;
+			_total -= amount;
+			if (_rows[iy] < 0 || _cols[ix] < 0 || _total < 0) throw new InvalidOperationException();
+		}
+
+		public IEnumerable<BlockToExplore> GetNextBlock()
+		{
+			for (int x = 0; x < _cols.Length; ++x)
+			{
+				if (_cols[x] == 0)
+					continue;
+				if (_total == 0)
+					yield break;
+
+				for (int y = 0; y < _rows.Length; ++y)
+				{
+					if(_rows[y] == 0)
+						continue;
+					if (_total == 0)
+						yield break;
+					yield return new BlockToExplore(x + _sx, y + _sy, 1);
+				}
+			}
+		}
+	}
+
 	public class BlockToExplore
 	{
 		private volatile int _amount;
@@ -337,7 +385,7 @@ namespace GoldDigger
 		private readonly List<BlockToExplore> _initialBlocks = new List<BlockToExplore>();
 		private volatile int _currentBlock;
 
-		private readonly ConcurrentQueue<TreasureChest>[] _recoveredTreasures = Enumerable.Repeat(0,10).Select(x => new ConcurrentQueue<TreasureChest>()).ToArray();
+		private readonly ConcurrentQueue<TreasureChest>[] _recoveredTreasures = Enumerable.Repeat(0, 10).Select(x => new ConcurrentQueue<TreasureChest>()).ToArray();
 		private readonly ConcurrentQueue<BlockToExplore>[] _secondaryExploreQueue = Enumerable.Repeat(0, 10).Select(x => new ConcurrentQueue<BlockToExplore>()).ToArray();
 
 		private readonly ConcurrentQueue<TreasureMap> _treasuresToDig1 = new ConcurrentQueue<TreasureMap>();
@@ -382,10 +430,10 @@ namespace GoldDigger
 			var api = new Api(uri.ToString(), new HttpClient());
 
 			// break down into exploration blocks
-			const int blockSize = 4;
-			for (int x = 0; x < 3500 - blockSize; x+= blockSize)
-				for (int y = 0; y < 3500 - blockSize; y+= blockSize)
-					_initialBlocks.Add(new BlockToExplore(x,y, blockSize));
+			const int blockSize = 16;
+			for (int x = 0; x < 3500 - blockSize; x += blockSize)
+				for (int y = 0; y < 3500 - blockSize; y += blockSize)
+					_initialBlocks.Add(new BlockToExplore(x, y, blockSize));
 
 			Shuffle(_initialBlocks);
 
@@ -398,10 +446,10 @@ namespace GoldDigger
 			_end = _start.AddMinutes(10);
 
 			_licensePool = new LicensePool(api, _coins);
-			
+
 			Log($"Ready - 10000 ticks = {TimeSpan.FromTicks(10000).TotalMilliseconds} msec");
 
-			var activeSeekers = new List<(Task,CancellationTokenSource)>();
+			var activeSeekers = new List<(Task, CancellationTokenSource)>();
 			var activeDiggers = new List<(Task, CancellationTokenSource)>();
 			var activeSellers = new List<(Task, CancellationTokenSource)>();
 			var activeFreeLic = new List<(Task, CancellationTokenSource)>();
@@ -411,10 +459,10 @@ namespace GoldDigger
 			var plan = new[]
 			{
 				// seekers, diggers, sellers, freelic, paidlic
-				new[] {8, 6, 1, 1, 2},
-				new[] {8, 6, 1, 0, 2},
-				new[] {8, 6, 1, 0, 2},
-				new[] {8, 6, 1, 0, 2},
+				new[] {4, 6, 2, 1, 2},
+				new[] {4, 6, 2, 0, 2},
+				new[] {4, 6, 2, 0, 2},
+				new[] {4, 6, 2, 0, 2},
 				new[] {4, 6, 2, 0, 2},
 				new[] {4, 6, 2, 0, 2},
 				new[] {4, 6, 2, 0, 2},
@@ -437,12 +485,12 @@ namespace GoldDigger
 					if (seekers > activeSeekers.Count)
 					{
 						var cts = new CancellationTokenSource();
-						activeSeekers.Add((Explorer(api, activeSeekers.Count == 0, cts.Token), cts));
+						activeSeekers.Add((ExplorerEx(api, cts.Token), cts));
 					}
 					else
 					{
 						var last = activeSeekers.Last();
-						activeSeekers.RemoveAt(activeSeekers.Count-1);
+						activeSeekers.RemoveAt(activeSeekers.Count - 1);
 						last.Item2.Cancel();
 					}
 				}
@@ -457,11 +505,11 @@ namespace GoldDigger
 					else
 					{
 						var last = activeDiggers.Last();
-						activeDiggers.RemoveAt(activeDiggers.Count-1);
+						activeDiggers.RemoveAt(activeDiggers.Count - 1);
 						last.Item2.Cancel();
 					}
 				}
-				
+
 				while (sellers != activeSellers.Count)
 				{
 					if (sellers > activeSellers.Count)
@@ -472,7 +520,7 @@ namespace GoldDigger
 					else
 					{
 						var last = activeSellers.Last();
-						activeSellers.RemoveAt(activeSellers.Count-1);
+						activeSellers.RemoveAt(activeSellers.Count - 1);
 						last.Item2.Cancel();
 					}
 				}
@@ -491,7 +539,7 @@ namespace GoldDigger
 						last.Item2.Cancel();
 					}
 				}
-				
+
 				while (paidLic != activePaidLic.Count)
 				{
 					if (paidLic > activePaidLic.Count)
@@ -635,21 +683,21 @@ namespace GoldDigger
 						int digRetryCounter = 0;
 						while (true)
 						{
-							var dig = new Dig {depth = map.Depth, licenseID = license.Id, posX = map.X, posY = map.Y};
+							var dig = new Dig { depth = map.Depth, licenseID = license.Id, posX = map.X, posY = map.Y };
 							var treasures = await api.DigAsync(dig, _ctsAppStop.Token);
 
 							if (treasures != null)
 							{
 								license.Discard();
 								foreach (var tr in treasures)
-									_recoveredTreasures[10-map.Depth].Enqueue(new TreasureChest {Id = tr, FromLevel = map.Depth});
+									_recoveredTreasures[10 - map.Depth].Enqueue(new TreasureChest { Id = tr, FromLevel = map.Depth });
 
 								Interlocked.Add(ref _treasureDugOutTotal, treasures.Length);
 								map.Depth++;
 								map.Amount -= treasures.Length;
 								break;
 							}
-
+							
 							if (digRetryCounter++ > 10)
 							{
 								license.Return();
@@ -663,6 +711,65 @@ namespace GoldDigger
 			catch (Exception ex)
 			{
 				Log("digger error:" + ex.Message);
+			}
+		}
+
+		public async Task ExplorerEx(Api api, CancellationToken token)
+		{
+			try
+			{
+				while (!token.IsCancellationRequested)
+				{
+					if (_currentBlock >= _initialBlocks.Count)
+						return;
+
+					var curBlockIdx = Interlocked.Increment(ref _currentBlock);
+					var block = _initialBlocks[curBlockIdx];
+
+					var cols = new int[block.Size];
+					var rows = new int[block.Size];
+					var tasks = new List<Task>(block.Size * 2);
+					for (int i = 0; i < block.Size; ++i)
+					{
+						tasks.Add(ExploreLine(block.X + i, block.Y, 1, block.Size, cols, i));
+						tasks.Add(ExploreLine(block.X, block.Y + i, block.Size, 1, rows, i));
+					}
+
+					await Task.WhenAll(tasks);
+
+					var ng = new Nonogramm(rows,cols,block.X,block.Y);
+					foreach (var bl in ng.GetNextBlock())
+					{
+						var result = await api.ExploreAreaAsync(
+							new Area { posX = bl.X, posY = bl.Y, sizeX = 1, sizeY = 1 },
+							CancellationToken.None);
+						if (result != null && result.amount > 0)
+						{
+							ng.ReportFound(result.amount, bl.X, bl.Y);
+							_treasuresToDig2.Enqueue(new TreasureMap(bl.X, bl.Y, result.amount));
+						}
+					}
+				}
+			}
+			catch (Exception ex)
+			{
+				Console.WriteLine("explorer2 error:" + ex.Message);
+			}
+
+			async Task ExploreLine(int x, int y, int sizeX, int sizeY, int[] target, int i)
+			{
+				int attempts = 0;
+				retry:
+				var result = await api.ExploreAreaAsync(
+					new Area { posX = x, posY = y, sizeX = sizeX, sizeY = sizeY },
+					CancellationToken.None);
+				if (result == null)
+				{
+					if (attempts++ > 10) throw new Exception("Too many failures");
+						goto retry;
+				}
+
+				target[i] = result.amount;
 			}
 		}
 

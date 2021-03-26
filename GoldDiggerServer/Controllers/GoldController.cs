@@ -50,7 +50,7 @@ namespace GoldServer.Controllers
         [HttpPost("licenses")]
         public IActionResult IssueLicense([FromBody] int[] coins)
         {
-          //_logger.LogInformation($"Issuing license for {coins.Length} coins");
+          _logger.LogInformation($"Issuing license for {coins.Length} coins");
           var allow = coins.Length switch 
           {
             0 => 3,
@@ -67,7 +67,7 @@ namespace GoldServer.Controllers
         {
           if (area.posX + area.sizeX >= 3500 || area.posY + area.sizeY >= 3500) 
             throw new Exception("Bad coordinates");
-          //_logger.LogInformation($"Exploring area {area?.sizeX}x{area?.sizeY} at {area?.posX}:{area?.posY}");
+          _logger.LogInformation($"Exploring area {area?.sizeX}x{area?.sizeY} at {area?.posX}:{area?.posY}");
             int ret = 0;
           for (int x = area.posX; x < area.posX + area.sizeX; ++x)
             for (int y = area.posY; y < area.posY + area.sizeY; ++y)
@@ -79,7 +79,7 @@ namespace GoldServer.Controllers
         [HttpPost("dig")]
         public IActionResult Dig([FromBody] Dig dig)
         {
-          //_logger.LogInformation($"Digging at {dig?.posX}:{dig?.posY}, depth {dig.depth}, with license {dig.licenseID}");
+          _logger.LogInformation($"Digging at {dig?.posX}:{dig?.posY}, depth {dig.depth}, with license {dig.licenseID}");
 
           return (map[dig.posY,dig.posY] & (1 << (dig.depth-1))) > 0 ? Ok(new[] { (dig.depth).ToString() }) : (IActionResult)NotFound();
         }
@@ -87,7 +87,7 @@ namespace GoldServer.Controllers
         [HttpPost("cash")]
         public IActionResult Cash([FromBody] string treasure)
         {
-          //_logger.LogInformation($"Cashing treasure {treasure}");
+          _logger.LogInformation($"Cashing treasure {treasure}");
           var t = int.Parse(treasure);
           var size = t switch
           {
