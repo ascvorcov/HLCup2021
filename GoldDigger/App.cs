@@ -430,7 +430,7 @@ namespace GoldDigger
 			var api = new Api(uri.ToString(), new HttpClient());
 
 			// break down into exploration blocks
-			const int blockSize = 16;
+			const int blockSize = 31;
 			for (int x = 0; x < 3500 - blockSize; x += blockSize)
 				for (int y = 0; y < 3500 - blockSize; y += blockSize)
 					_initialBlocks.Add(new BlockToExplore(x, y, blockSize));
@@ -664,7 +664,6 @@ namespace GoldDigger
 						}
 					}
 
-					Interlocked.Increment(ref _mapsProcessedByDiggersTotal);
 					while (map.Amount > 0 && map.Depth <= 10)
 					{
 						if (map.Depth > 3 && _coins.Count == 0)
@@ -706,6 +705,10 @@ namespace GoldDigger
 							}
 						}
 					}
+
+					if(map.Depth > 10)
+						Interlocked.Increment(ref _mapsProcessedByDiggersTotal);
+
 				}
 			}
 			catch (Exception ex)
@@ -745,6 +748,8 @@ namespace GoldDigger
 							CancellationToken.None);
 						if (result != null && result.amount > 0)
 						{
+							Interlocked.Increment(ref _mapsDiscoveredTotal);
+
 							ng.ReportFound(result.amount, bl.X, bl.Y);
 							_treasuresToDig2.Enqueue(new TreasureMap(bl.X, bl.Y, result.amount));
 						}
