@@ -23,18 +23,24 @@ no digging/explore/license activity, to provide max throughput.
 ## Statistics
 
 Average cashing time is 20ms when no other activity present, 120ms otherwise:
+
 ![](images/timing.png)
 
 Most delays are from waiting for expired license, and some maps queue contention:
+
 ![](images/delays.png)
 
 Since we are selling more expensive treasures first, there is a noticable decay in treasure yield in the last 3 minutes.
+
 Maps and treasures queue income is balanced out.
+
 ![](images/flow.png)
 
 Best result in number of dug out treasures is 25K. Max treasure queue size I could get is around 20K by 7th minute.
+
 ![](images/queue_size.png)
 
 Exploration has 600 RPS (with cap of 1000), balanced out by digging activity. Running exploration first and then digging and selling
 proved to be a worse strategy.
+
 ![](images/rps.png)
